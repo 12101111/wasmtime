@@ -52,6 +52,17 @@ impl WasiHttpView for Host {
     }
 }
 
+#[cfg(feature = "wasi-nn")]
+impl wasmtime_wasi_nn::WasiNnView for Host {
+    fn ctx(&mut self) -> &mut WasiNnCtx {
+        self.nn.as_mut().unwrap()
+    }
+
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
+        &mut self.table
+    }
+}
+
 const DEFAULT_ADDR: std::net::SocketAddr = std::net::SocketAddr::new(
     std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
     8080,
@@ -214,7 +225,7 @@ impl ServeCommand {
             }
             #[cfg(feature = "wasi-nn")]
             {
-                wasmtime_wasi_nn::wit::ML::add_to_linker(linker, |host| host.nn.as_mut().unwrap())?;
+                wasmtime_wasi_nn::wit::ML::add_to_linker(linker, |host| host)?;
             }
         }
 

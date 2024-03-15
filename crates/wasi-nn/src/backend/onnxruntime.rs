@@ -1,12 +1,20 @@
 //! Implements a `wasi-nn` [`BackendInner`] using ONNX via ort.
 
-use super::{BackendError, BackendExecutionContext, BackendFromDir, BackendGraph, BackendInner};
-use crate::backend::read;
-use crate::wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType};
-use crate::{ExecutionContext, Graph};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+use anyhow::Context;
 use ort::{inputs, GraphOptimizationLevel, Session};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+
+use super::{BackendError, BackendExecutionContext, BackendFromDir, BackendGraph, BackendInner};
+use crate::{
+    backend::read,
+    wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType},
+    ExecutionContext, Graph,
+};
 
 #[derive(Default)]
 pub struct OnnxBackend();
@@ -57,11 +65,25 @@ impl BackendGraph for ONNXGraph {
     fn init_execution_context(&self) -> Result<ExecutionContext, BackendError> {
         let session = self.0.lock().unwrap();
         let inputs = session.inputs.iter().map(|_| None).collect::<Vec<_>>();
+        let input_map = session
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(idx, input)| (input.name.clone(), idx))
+            .collect();
         let outputs = session.outputs.iter().map(|_| None).collect::<Vec<_>>();
+        let output_map = session
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(idx, output)| (output.name.clone(), idx))
+            .collect();
         let box_: Box<dyn BackendExecutionContext> = Box::new(ONNXExecutionContext {
             session: self.0.clone(),
             inputs,
+            input_map,
             outputs,
+            output_map,
         });
         Ok(box_.into())
     }
@@ -70,15 +92,18 @@ impl BackendGraph for ONNXGraph {
 struct ONNXExecutionContext {
     session: Arc<Mutex<Session>>,
     inputs: Vec<Option<Tensor>>,
-    outputs: Vec<Option<Vec<u8>>>,
+    input_map: HashMap<String, usize>,
+    outputs: Vec<Option<Tensor>>,
+    output_map: HashMap<String, usize>,
 }
 
 unsafe impl Send for ONNXExecutionContext {}
 unsafe impl Sync for ONNXExecutionContext {}
 
 impl BackendExecutionContext for ONNXExecutionContext {
-    fn set_input(&mut self, index: u32, tensor: &Tensor) -> Result<(), BackendError> {
-        self.inputs[index as usize].replace(tensor.clone());
+    fn set_input(&mut self, name: &str, tensor: &Tensor) -> Result<(), BackendError> {
+        let index = self.input_map.get(name).context("input name not found")?;
+        self.inputs[*index].replace(tensor.clone());
         Ok(())
     }
 
@@ -114,15 +139,27 @@ impl BackendExecutionContext for ONNXExecutionContext {
         for i in 0..self.outputs.len() {
             let raw: (Vec<i64>, &[f32]) = res[i].extract_raw_tensor()?;
             let f32s = raw.1.to_vec();
-            self.outputs[i].replace(f32_vec_to_bytes(f32s));
+            let data = f32_vec_to_bytes(f32s);
+            let tensor_type = TensorType::Fp32;
+            let dimensions = res[i]
+                .dtype()?
+                .tensor_dimensions()
+                .context("dimensions of output not supported")?
+                .iter().map(|&i| i as u32)
+                .collect();
+            let tensor = Tensor { dimensions, tensor_type, data };
+            self.outputs[i].replace(tensor);
         }
         Ok(())
     }
 
-    fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError> {
-        let output = self.outputs[index as usize].as_ref().unwrap();
-        destination[..output.len()].copy_from_slice(output);
-        Ok(output.len() as u32)
+    fn get_output(&mut self, name: &str) -> Result<Tensor, BackendError> {
+        let index = self
+            .output_map
+            .get(name)
+            .context("output name not found")?;
+        let data = self.outputs[*index].as_ref().unwrap().to_owned();
+        Ok(data)
     }
 }
 

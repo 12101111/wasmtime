@@ -652,24 +652,11 @@ impl RunCommand {
             {
                 match linker {
                     CliLinker::Core(linker) => {
-                        wasmtime_wasi_nn::witx::add_to_linker(linker, |host| {
-                            // This WASI proposal is currently not protected against
-                            // concurrent access--i.e., when wasi-threads is actively
-                            // spawning new threads, we cannot (yet) safely allow access and
-                            // fail if more than one thread has `Arc`-references to the
-                            // context. Once this proposal is updated (as wasi-common has
-                            // been) to allow concurrent access, this `Arc::get_mut`
-                            // limitation can be removed.
-                            Arc::get_mut(host.wasi_nn.as_mut().unwrap())
-                                .expect("wasi-nn is not implemented with multi-threading support")
-                        })?;
+                        wasmtime_wasi_nn::witx::add_to_linker(linker, |t| t)?;
                     }
                     #[cfg(feature = "component-model")]
                     CliLinker::Component(linker) => {
-                        wasmtime_wasi_nn::wit::ML::add_to_linker(linker, |host| {
-                            Arc::get_mut(host.wasi_nn.as_mut().unwrap())
-                                .expect("wasi-nn is not implemented with multi-threading support")
-                        })?;
+                        wasmtime_wasi_nn::wit::ML::add_to_linker(linker, |t| t)?;
                     }
                 }
                 let graphs = self
@@ -897,6 +884,21 @@ impl wasmtime_wasi_http::types::WasiHttpView for Host {
     fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
         Arc::get_mut(&mut self.preview2_table)
             .expect("preview2 is not compatible with threads")
+            .get_mut()
+            .unwrap()
+    }
+}
+
+#[cfg(feature = "wasi-nn")]
+impl wasmtime_wasi_nn::WasiNnView for Host {
+    fn ctx(&mut self) -> &mut WasiNnCtx {
+        let ctx = self.wasi_nn.as_mut().unwrap();
+        Arc::get_mut(ctx).expect("wasmtime_wasi_nn is not compatible with threads")
+    }
+
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable {
+        Arc::get_mut(&mut self.preview2_table)
+            .expect("wasmtime_wasi_nn is not compatible with threads")
             .get_mut()
             .unwrap()
     }

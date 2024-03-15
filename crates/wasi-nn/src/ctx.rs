@@ -2,14 +2,12 @@
 
 use crate::backend::{self, BackendError};
 use crate::wit::types::GraphEncoding;
-use crate::{Backend, ExecutionContext, Graph, InMemoryRegistry, Registry};
+use crate::{Backend, InMemoryRegistry, Registry};
 use anyhow::anyhow;
-use std::{collections::HashMap, hash::Hash, path::Path};
+use std::{collections::HashMap, path::Path};
 use thiserror::Error;
 use wiggle::GuestError;
 
-type GraphId = u32;
-type GraphExecutionContextId = u32;
 type BackendName = String;
 type GraphDirectory = String;
 
@@ -35,12 +33,15 @@ pub fn preload(
     Ok((backends, Registry::from(registry)))
 }
 
+pub trait WasiNnView: Send {
+    fn table(&mut self) -> &mut wasmtime::component::ResourceTable;
+    fn ctx(&mut self) -> &mut WasiNnCtx;
+}
+
 /// Capture the state necessary for calling into the backend ML libraries.
 pub struct WasiNnCtx {
     pub(crate) backends: HashMap<GraphEncoding, Backend>,
     pub(crate) registry: Registry,
-    pub(crate) graphs: Table<GraphId, Graph>,
-    pub(crate) executions: Table<GraphExecutionContextId, ExecutionContext>,
 }
 
 impl WasiNnCtx {
@@ -50,8 +51,6 @@ impl WasiNnCtx {
         Self {
             backends,
             registry,
-            graphs: Table::default(),
-            executions: Table::default(),
         }
     }
 }
@@ -87,49 +86,10 @@ pub enum UsageError {
 
 pub(crate) type WasiNnResult<T> = std::result::Result<T, WasiNnError>;
 
-/// Record handle entries in a table.
-pub struct Table<K, V> {
-    entries: HashMap<K, V>,
-    next_key: u32,
-}
-
-impl<K, V> Default for Table<K, V> {
-    fn default() -> Self {
-        Self {
-            entries: HashMap::new(),
-            next_key: 0,
-        }
-    }
-}
-
-impl<K, V> Table<K, V>
-where
-    K: Eq + Hash + From<u32> + Copy,
-{
-    pub fn insert(&mut self, value: V) -> K {
-        let key = self.use_next_key();
-        self.entries.insert(key, value);
-        key
-    }
-
-    pub fn get(&self, key: K) -> Option<&V> {
-        self.entries.get(&key)
-    }
-
-    pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
-        self.entries.get_mut(&key)
-    }
-
-    fn use_next_key(&mut self) -> K {
-        let current = self.next_key;
-        self.next_key += 1;
-        K::from(current)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Graph;
     use crate::registry::GraphRegistry;
 
     #[test]

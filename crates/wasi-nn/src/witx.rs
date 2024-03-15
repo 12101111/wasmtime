@@ -13,8 +13,13 @@
 //!
 //! [`types`]: crate::wit::types
 
-use crate::ctx::{UsageError, WasiNnCtx, WasiNnError, WasiNnResult as Result};
+use wasmtime::component::Resource;
 use wiggle::GuestPtr;
+
+use crate::{
+    backend::BackendError,
+    ctx::{UsageError, WasiNnError, WasiNnResult as Result, WasiNnView},
+};
 
 pub use gen::wasi_ephemeral_nn::add_to_linker;
 
@@ -35,7 +40,7 @@ mod gen {
     }
 
     /// Convert the host errors to their WITX-generated type.
-    impl<'a> types::UserErrorConversion for WasiNnCtx {
+    impl<'a, T: WasiNnView> types::UserErrorConversion for T {
         fn nn_errno_from_wasi_nn_error(
             &mut self,
             e: WasiNnError,
@@ -51,14 +56,14 @@ mod gen {
 }
 
 /// Wire up the WITX-generated trait to the `wasi-nn` host state.
-impl<'a> gen::wasi_ephemeral_nn::WasiEphemeralNn for WasiNnCtx {
+impl<'a, T: WasiNnView> gen::wasi_ephemeral_nn::WasiEphemeralNn for T {
     fn load<'b>(
         &mut self,
         builders: &gen::types::GraphBuilderArray<'_>,
         encoding: gen::types::GraphEncoding,
         target: gen::types::ExecutionTarget,
     ) -> Result<gen::types::Graph> {
-        let graph = if let Some(backend) = self.backends.get_mut(&encoding.into()) {
+        let graph = if let Some(backend) = self.ctx().backends.get_mut(&encoding.into()) {
             // Retrieve all of the "builder lists" from the Wasm memory (see
             // $graph_builder_array) as slices for a backend to operate on.
             let mut slices = vec![];
@@ -74,15 +79,22 @@ impl<'a> gen::wasi_ephemeral_nn::WasiEphemeralNn for WasiNnCtx {
         } else {
             return Err(UsageError::InvalidEncoding(encoding.into()).into());
         };
-        let graph_id = self.graphs.insert(graph);
-        Ok(graph_id.into())
+        let graph_id = self
+            .table()
+            .push(graph)
+            .map_err(|e| BackendError::BackendAccess(e.into()))?;
+        Ok(graph_id.rep().into())
     }
 
     fn load_by_name<'b>(&mut self, name: &wiggle::GuestPtr<'b, str>) -> Result<gen::types::Graph> {
         let name = name.as_str()?.unwrap();
-        if let Some(graph) = self.registry.get_mut(&name) {
-            let graph_id = self.graphs.insert(graph.clone().into());
-            Ok(graph_id.into())
+        if let Some(graph) = self.ctx().registry.get_mut(&name) {
+            let graph = graph.clone();
+            let graph_id = self
+                .table()
+                .push(graph)
+                .map_err(|e| BackendError::BackendAccess(e.into()))?;
+            Ok(graph_id.rep().into())
         } else {
             return Err(UsageError::NotFound(name.to_string()).into());
         }
@@ -92,36 +104,43 @@ impl<'a> gen::wasi_ephemeral_nn::WasiEphemeralNn for WasiNnCtx {
         &mut self,
         graph_id: gen::types::Graph,
     ) -> Result<gen::types::GraphExecutionContext> {
-        let exec_context = if let Some(graph) = self.graphs.get_mut(graph_id.into()) {
+        let resource: Resource<crate::Graph> = Resource::new_own(graph_id.into());
+        let exec_context = if let Ok(graph) = self.table().get_mut(&resource) {
             graph.init_execution_context()?
         } else {
             return Err(UsageError::InvalidGraphHandle.into());
         };
 
-        let exec_context_id = self.executions.insert(exec_context);
-        Ok(exec_context_id.into())
+        let exec_context_id = self
+            .table()
+            .push(exec_context)
+            .map_err(|e| BackendError::BackendAccess(e.into()))?;
+        Ok(exec_context_id.rep().into())
     }
 
     fn set_input<'b>(
         &mut self,
         exec_context_id: gen::types::GraphExecutionContext,
-        index: u32,
+        name: &wiggle::GuestPtr<'b, str>,
         tensor: &gen::types::Tensor<'b>,
     ) -> Result<()> {
-        if let Some(exec_context) = self.executions.get_mut(exec_context_id.into()) {
+        let resource: Resource<crate::ExecutionContext> = Resource::new_own(exec_context_id.into());
+        if let Ok(exec_context) = self.table().get_mut(&resource) {
+            let name = name.as_str()?.unwrap();
             let tensor = crate::wit::types::Tensor {
                 dimensions: tensor.dimensions.to_vec()?,
                 tensor_type: tensor.type_.into(),
                 data: tensor.data.to_vec()?,
             };
-            Ok(exec_context.set_input(index, &tensor)?)
+            Ok(exec_context.set_input(&name, &tensor)?)
         } else {
             Err(UsageError::InvalidGraphHandle.into())
         }
     }
 
     fn compute(&mut self, exec_context_id: gen::types::GraphExecutionContext) -> Result<()> {
-        if let Some(exec_context) = self.executions.get_mut(exec_context_id.into()) {
+        let resource: Resource<crate::ExecutionContext> = Resource::new_own(exec_context_id.into());
+        if let Ok(exec_context) = self.table().get_mut(&resource) {
             Ok(exec_context.compute()?)
         } else {
             Err(UsageError::InvalidExecutionContextHandle.into())
@@ -131,16 +150,21 @@ impl<'a> gen::wasi_ephemeral_nn::WasiEphemeralNn for WasiNnCtx {
     fn get_output<'b>(
         &mut self,
         exec_context_id: gen::types::GraphExecutionContext,
-        index: u32,
+        name: &wiggle::GuestPtr<'b, str>,
         out_buffer: &GuestPtr<'_, u8>,
         out_buffer_max_size: u32,
     ) -> Result<u32> {
-        if let Some(exec_context) = self.executions.get_mut(exec_context_id.into()) {
+        let resource: Resource<crate::ExecutionContext> = Resource::new_own(exec_context_id.into());
+        if let Ok(exec_context) = self.table().get_mut(&resource) {
             let mut destination = out_buffer
                 .as_array(out_buffer_max_size)
                 .as_slice_mut()?
                 .expect("cannot use with shared memories; see https://github.com/bytecodealliance/wasmtime/issues/5235 (TODO)");
-            Ok(exec_context.get_output(index, &mut destination)?)
+            let name = name.as_str()?.unwrap();
+            let tensor = exec_context.get_output(&name)?;
+            let output = tensor.data;
+            destination[..output.len()].copy_from_slice(&output);
+            Ok(output.len() as u32)
         } else {
             Err(UsageError::InvalidGraphHandle.into())
         }

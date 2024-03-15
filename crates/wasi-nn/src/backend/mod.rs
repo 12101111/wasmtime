@@ -69,9 +69,9 @@ pub trait BackendGraph: Send + Sync {
 /// A [BackendExecutionContext] performs the actual inference; this is the
 /// backing implementation for a user-facing execution context.
 pub trait BackendExecutionContext: Send + Sync {
-    fn set_input(&mut self, index: u32, tensor: &Tensor) -> Result<(), BackendError>;
+    fn set_input(&mut self, name: &str, tensor: &Tensor) -> Result<(), BackendError>;
     fn compute(&mut self) -> Result<(), BackendError>;
-    fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError>;
+    fn get_output(&mut self, name: &str) -> Result<Tensor, BackendError>;
 }
 
 /// Errors returned by a backend; [BackendError::BackendAccess] is a catch-all

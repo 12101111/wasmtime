@@ -1,13 +1,19 @@
 //! Implements a `wasi-nn` [`BackendInner`] using OpenVINO.
 
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+use openvino::{InferenceError, Layout, Precision, SetupError, TensorDesc};
+
 use super::{
     read, BackendError, BackendExecutionContext, BackendFromDir, BackendGraph, BackendInner,
 };
-use crate::wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType};
-use crate::{ExecutionContext, Graph};
-use openvino::{InferenceError, Layout, Precision, SetupError, TensorDesc};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use crate::{
+    wit::types::{ExecutionTarget, GraphEncoding, Tensor, TensorType},
+    ExecutionContext, Graph,
+};
 
 #[derive(Default)]
 pub struct OpenvinoBackend(Option<openvino::Core>);
@@ -99,9 +105,7 @@ impl BackendGraph for OpenvinoGraph {
 struct OpenvinoExecutionContext(Arc<openvino::CNNNetwork>, openvino::InferRequest);
 
 impl BackendExecutionContext for OpenvinoExecutionContext {
-    fn set_input(&mut self, index: u32, tensor: &Tensor) -> Result<(), BackendError> {
-        let input_name = self.0.get_input_name(index as usize)?;
-
+    fn set_input(&mut self, name: &str, tensor: &Tensor) -> Result<(), BackendError> {
         // Construct the blob structure. TODO: there must be some good way to
         // discover the layout here; `desc` should not have to default to NHWC.
         let precision = map_tensor_type_to_precision(tensor.tensor_type);
@@ -114,7 +118,7 @@ impl BackendExecutionContext for OpenvinoExecutionContext {
         let blob = openvino::Blob::new(&desc, &tensor.data)?;
 
         // Actually assign the blob to the request.
-        self.1.set_blob(&input_name, &blob)?;
+        self.1.set_blob(name, &blob)?;
         Ok(())
     }
 
@@ -123,17 +127,21 @@ impl BackendExecutionContext for OpenvinoExecutionContext {
         Ok(())
     }
 
-    fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError> {
-        let output_name = self.0.get_output_name(index as usize)?;
-        let blob = self.1.get_blob(&output_name)?;
-        let blob_size = blob.byte_len()?;
-        if blob_size > destination.len() {
-            return Err(BackendError::NotEnoughMemory(blob_size));
-        }
+    fn get_output(&mut self, name: &str) -> Result<Tensor, BackendError> {
+        let blob = self.1.get_blob(name)?;
 
-        // Copy the tensor data into the destination buffer.
-        destination[..blob_size].copy_from_slice(blob.buffer()?);
-        Ok(blob_size as u32)
+        let desc = blob.tensor_desc()?;
+        let precision = desc.precision();
+
+        let dimensions = desc.dims().iter().map(|&d| d as u32).collect();
+        let tensor_type = map_precision_to_tensor_type(precision);
+        let data = blob.buffer()?.to_owned();
+
+        Ok(Tensor {
+            dimensions,
+            tensor_type,
+            data,
+        })
     }
 }
 
@@ -170,5 +178,17 @@ fn map_tensor_type_to_precision(tensor_type: TensorType) -> openvino::Precision 
         TensorType::I32 => Precision::I32,
         TensorType::I64 => Precision::I64,
         TensorType::Bf16 => todo!("not yet supported in `openvino` bindings"),
+    }
+}
+
+fn map_precision_to_tensor_type(precision: openvino::Precision) -> TensorType {
+    match precision {
+        Precision::FP16 => TensorType::Fp16,
+        Precision::FP32 => TensorType::Fp32,
+        Precision::FP64 => TensorType::Fp64,
+        Precision::U8 => TensorType::U8,
+        Precision::I32 => TensorType::I32,
+        Precision::I64 => TensorType::I64,
+        _ => todo!("not yet supported"),
     }
 }
