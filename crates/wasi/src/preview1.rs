@@ -22,7 +22,7 @@ use wiggle::tracing::instrument;
 use wiggle::{GuestError, GuestPtr, GuestStrCow, GuestType};
 
 #[derive(Debug)]
-struct File {
+pub struct File {
     /// The handle to the preview2 descriptor of type [`crate::filesystem::Descriptor::File`].
     fd: Resource<filesystem::Descriptor>,
 
@@ -138,7 +138,7 @@ impl BlockingMode {
 }
 
 #[derive(Debug)]
-enum Descriptor {
+pub enum Descriptor {
     Stdin {
         stream: Resource<streams::InputStream>,
         isatty: IsATTY,
@@ -334,7 +334,7 @@ pub trait WasiPreview1View: WasiView {
 // of the [`WasiPreview1View`] to provide means to return mutably and immutably borrowed [`Descriptors`]
 // without having to rely on something like `Arc<Mutex<Descriptors>>`, while also being able to
 // call methods like [`Descriptor::is_file`] and hiding complexity from preview1 method implementations.
-struct Transaction<'a, T: WasiPreview1View + ?Sized> {
+pub struct Transaction<'a, T: WasiPreview1View + ?Sized> {
     view: &'a mut T,
     descriptors: Descriptors,
 }
@@ -427,7 +427,7 @@ impl<T: WasiPreview1View + ?Sized> Transaction<'_, T> {
     }
 }
 
-trait WasiPreview1ViewExt:
+pub trait WasiPreview1ViewExt:
     WasiPreview1View
     + preopens::Host
     + stdin::Host
