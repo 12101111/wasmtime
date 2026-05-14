@@ -9,6 +9,7 @@ use crate::translate::{
     TargetEnvironment,
 };
 use crate::trap::TranslateTrap;
+use crate::{append_profile_default_inst, append_profile_inst};
 use cranelift_codegen::cursor::FuncCursor;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::immediates::{Imm64, Offset32, V128Imm};
@@ -3742,6 +3743,319 @@ impl FuncEnvironment<'_> {
         if let Some(ref profile) = self.profile {
             builder.set_srcloc(profile.reset_column());
         }
+    }
+
+    // === Profiled builder wrappers for memory instructions ===
+    #[track_caller]
+    pub fn build_load<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().load(ty, flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_store<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        value: ir::Value,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Store);
+        let result = builder.ins().store(flags, value, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_uload8<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().uload8(ty, flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_sload8<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().sload8(ty, flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_uload16<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().uload16(ty, flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_sload16<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().sload16(ty, flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_uload32<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().uload32(flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_sload32<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().sload32(flags, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_istore8<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        value: ir::Value,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Store);
+        let result = builder.ins().istore8(flags, value, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_istore16<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        value: ir::Value,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Store);
+        let result = builder.ins().istore16(flags, value, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_istore32<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        flags: T1,
+        value: ir::Value,
+        addr: ir::Value,
+        offset: T2,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Store);
+        let result = builder.ins().istore32(flags, value, addr, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_stack_load<T1: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: ir::Type,
+        slot: ir::StackSlot,
+        offset: T1,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().stack_load(ty, slot, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_stack_store<T1: Into<ir::immediates::Offset32>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        value: ir::Value,
+        slot: ir::StackSlot,
+        offset: T1,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Store);
+        let result = builder.ins().stack_store(value, slot, offset);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    // === Profiled builder wrappers for control-flow instructions ===
+
+    #[track_caller]
+    pub fn build_jump<'a>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        block: ir::Block,
+        args: impl IntoIterator<Item = &'a ir::BlockArg>,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Jump);
+        let result = builder.ins().jump(block, args);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_brif<'a>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        cond: ir::Value,
+        block_then: ir::Block,
+        args_then: impl IntoIterator<Item = &'a ir::BlockArg>,
+        block_else: ir::Block,
+        args_else: impl IntoIterator<Item = &'a ir::BlockArg>,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().brif(cond, block_then, args_then, block_else, args_else);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_br_table(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        val: ir::Value,
+        jt: ir::JumpTable,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Switch);
+        let result = builder.ins().br_table(val, jt);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_call(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        callee: ir::FuncRef,
+        args: &[ir::Value],
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Call);
+        let result = builder.ins().call(callee, args);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_call_indirect(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        sig: ir::SigRef,
+        callee: ir::Value,
+        args: &[ir::Value],
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, CallIndirect);
+        let result = builder.ins().call_indirect(sig, callee, args);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_return(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        vals: &[ir::Value],
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Return);
+        let result = builder.ins().return_(vals);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_trap<T: Into<ir::TrapCode>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        code: T,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Call);
+        let result = builder.ins().trap(code);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_trapz<T: Into<ir::TrapCode>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        cond: ir::Value,
+        code: T,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().trapz(cond, code);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
+    #[track_caller]
+    pub fn build_trapnz<T: Into<ir::TrapCode>>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        cond: ir::Value,
+        code: T,
+    ) -> ir::Inst {
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().trapnz(cond, code);
+        append_profile_default_inst!(self, builder);
+        result
     }
 
     pub fn relaxed_simd_deterministic(&self) -> bool {

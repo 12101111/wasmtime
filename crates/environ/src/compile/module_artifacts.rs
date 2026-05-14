@@ -122,6 +122,7 @@ impl<'a> ObjectBuilder<'a> {
             data_align,
             passive_data,
             wasm,
+            #[cfg(feature = "profiler")]
             profile,
             ..
         } = translation;

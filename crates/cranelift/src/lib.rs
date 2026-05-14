@@ -448,3 +448,24 @@ enum Reachability<T> {
     /// `FuncTranslationStacks::reachable` as necessary.
     Unreachable,
 }
+
+#[macro_export]
+macro_rules! append_profile_inst {
+    ($self: expr, $builder: expr, $kind: ident) => {
+        #[cfg(feature = "profiler")]
+        {
+            use wa2x_testabi::InstKind::*;
+            $self.append_profile_inst($builder, $kind);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! append_profile_default_inst {
+    ($self: expr, $builder: expr) => {
+        #[cfg(feature = "profiler")]
+        {
+            $self.append_profile_default_inst($builder);
+        }
+    };
+}
