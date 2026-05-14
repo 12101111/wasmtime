@@ -14,6 +14,8 @@ use crate::{
 };
 use cranelift_entity::SecondaryMap;
 use cranelift_entity::packed_option::ReservedValue;
+#[cfg(feature = "profiler")]
+use wa2x_testabi::ProfileInfo;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
@@ -80,6 +82,10 @@ pub struct ModuleTranslation<'data> {
     /// DWARF debug information, if enabled, parsed from the module.
     pub debuginfo: DebugInfoData<'data>,
 
+    /// Module level profiler state for virtual source code mapping.
+    #[cfg(feature = "profiler")]
+    pub profile: Option<ProfileInfo>,
+
     /// Set if debuginfo was found but it was not parsed due to `Tunables`
     /// configuration.
     pub has_unparsed_debuginfo: bool,
@@ -120,7 +126,7 @@ pub struct ModuleTranslation<'data> {
 
 impl<'data> ModuleTranslation<'data> {
     /// Create a new translation for the module with the given index.
-    pub fn new(module_index: StaticModuleIndex) -> Self {
+    pub fn new(tunables: &Tunables, module_index: StaticModuleIndex) -> Self {
         Self {
             module: Module::new(module_index),
             wasm: &[],
@@ -129,6 +135,12 @@ impl<'data> ModuleTranslation<'data> {
             known_imported_functions: SecondaryMap::default(),
             exported_signatures: Vec::default(),
             debuginfo: DebugInfoData::default(),
+            #[cfg(feature = "profiler")]
+            profile: if tunables.enable_profile {
+                Some(wa2x_testabi::ProfileInfo::new(format!("{module_index:?}")))
+            } else {
+                None
+            },
             has_unparsed_debuginfo: false,
             data: Vec::default(),
             data_align: None,
@@ -213,7 +225,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
         module_index: StaticModuleIndex,
     ) -> Self {
         Self {
-            result: ModuleTranslation::new(module_index),
+            result: ModuleTranslation::new(tunables, module_index),
             types,
             tunables,
             validator,

@@ -3,6 +3,7 @@ pub(crate) mod stack_switching;
 
 use crate::BuiltinFunctionSignatures;
 use crate::compiler::Compiler;
+use crate::profile::ProfileState;
 use crate::translate::{
     FuncTranslationStacks, GlobalVariable, Heap, HeapData, StructFieldsVec, TableData, TableSize,
     TargetEnvironment,
@@ -229,6 +230,9 @@ pub struct FuncEnvironment<'module_environment> {
     /// nonlinear control flow). This is useful in cases where we need
     /// to e.g. record the return-address of a callsite for debuginfo.
     pub(crate) next_srcloc: ir::SourceLoc,
+
+    /// Function level profiler state for virtual source code mapping.
+    pub(crate) profile: Option<ProfileState>
 }
 
 impl<'module_environment> FuncEnvironment<'module_environment> {
@@ -291,6 +295,9 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             state_slot: None,
             next_srcloc: ir::SourceLoc::default(),
             wasm_module_offset: translation.wasm_module_offset,
+
+            #[cfg(feature = "profiler")]
+            profile: None,
         }
     }
 
@@ -3625,6 +3632,11 @@ impl FuncEnvironment<'_> {
         _operand_types: Option<&[WasmValType]>,
         builder: &mut FunctionBuilder,
     ) -> WasmResult<()> {
+        #[cfg(feature = "profiler")]
+        if self.tunables.enable_profile {
+            self.append_profile_opkind(builder, wa2x_testabi::OperatorKind::from(op));
+        }
+
         if self.tunables.consume_fuel {
             self.fuel_before_op(op, builder, self.is_reachable());
         }
@@ -3702,6 +3714,34 @@ impl FuncEnvironment<'_> {
         }
         self.finish_debug_metadata(builder);
         Ok(())
+    }
+
+    /// Append an operator kind to the profile and set the builder srcloc.
+    #[cfg(feature = "profiler")]
+    pub fn append_profile_opkind(&mut self, builder: &mut FunctionBuilder, op: wa2x_testabi::OperatorKind) {
+        if let Some(profile) = &mut self.profile {
+            profile.append_opkind(op);
+            builder.set_srcloc(profile.reset_column());
+        }
+    }
+
+    /// Set the builder's srcloc for the given inst kind.
+    #[cfg(feature = "profiler")]
+    #[track_caller]
+    pub fn append_profile_inst(&mut self, builder: &mut FunctionBuilder, kind: wa2x_testabi::InstKind) {
+        if let Some(profile) = &mut self.profile {
+            let loc = std::panic::Location::caller();
+            let column = profile.append_inst(kind, loc);
+            builder.set_srcloc(profile.srcloc_for_column(column));
+        }
+    }
+
+    /// Reset the builder's srcloc to column 0.
+    #[cfg(feature = "profiler")]
+    pub fn append_profile_default_inst(&mut self, builder: &mut FunctionBuilder) {
+        if let Some(ref profile) = self.profile {
+            builder.set_srcloc(profile.reset_column());
+        }
     }
 
     pub fn relaxed_simd_deterministic(&self) -> bool {

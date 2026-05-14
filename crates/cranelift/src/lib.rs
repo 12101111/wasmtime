@@ -44,6 +44,8 @@ mod debug;
 mod func_environ;
 mod translate;
 mod trap;
+#[cfg(feature = "profiler")]
+mod profile;
 
 use self::compiler::Compiler;
 

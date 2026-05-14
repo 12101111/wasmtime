@@ -34,7 +34,7 @@ checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
  "cipher",
- "cpufeatures",
+ "cpufeatures 0.2.7",
 ]
 
 [[package]]
@@ -148,6 +148,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -255,6 +267,21 @@ name = "bitflags"
 version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
+
+[[package]]
+name = "blake3"
+version = "1.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq 0.4.2",
+ "cpufeatures 0.3.0",
+ "serde",
+]
 
 [[package]]
 name = "block-buffer"
@@ -655,6 +682,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 
 [[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -684,6 +717,15 @@ name = "cpufeatures"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e4c1eaa2012c47becbbad2ab175484c2a84d1185b566fb2cc5b8707343dfe58"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
 ]
@@ -3403,7 +3445,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.7",
  "digest",
 ]
 
@@ -3414,7 +3456,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55deaec60f81eefe3cce0dc50bda92d6d8e88f2a27df7c5033b42afeb1ed2676"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.7",
  "digest",
 ]
 
@@ -4225,6 +4267,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
+name = "wa2x-testabi"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "wasmparser 0.248.0",
+]
+
+[[package]]
 name = "wait-timeout"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4581,6 +4632,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmparser"
+version = "0.248.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa4439c5eee9df71ee0c6efb37f63b1fcb1fec38f85f5142c54e7ed05d33091a"
+dependencies = [
+ "bitflags 2.9.4",
+]
+
+[[package]]
 name = "wasmprinter"
 version = "0.246.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4813,6 +4873,7 @@ dependencies = [
  "sha2",
  "smallvec 1.15.1",
  "target-lexicon",
+ "wa2x-testabi",
  "wasm-encoder 0.246.1",
  "wasmparser 0.246.1",
  "wasmprinter",
@@ -4985,10 +5046,12 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "object 0.39.0",
+ "postcard",
  "pulley-interpreter",
  "smallvec 1.15.1",
  "target-lexicon",
  "thiserror 2.0.17",
+ "wa2x-testabi",
  "wasmparser 0.246.1",
  "wasmtime-environ",
  "wasmtime-internal-core",
@@ -6039,7 +6102,7 @@ dependencies = [
  "aes",
  "byteorder",
  "bzip2",
- "constant_time_eq",
+ "constant_time_eq 0.1.5",
  "crc32fast",
  "crossbeam-utils",
  "flate2",

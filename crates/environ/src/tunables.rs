@@ -152,6 +152,10 @@ define_tunables! {
         /// Whether recording in RR is enabled or not. This is used primarily
         /// to signal checksum computation for compiled artifacts.
         pub recording: bool,
+
+        /// Whether to enable the profiler, which generates virtual source code
+        /// mapping between wasm instructions and generated machine code.
+        pub enable_profile: bool,
     }
 
     pub struct ConfigTunables {
@@ -230,6 +234,7 @@ impl Tunables {
             debug_guest: false,
             concurrency_support: true,
             recording: false,
+            enable_profile: false,
         }
     }
 
