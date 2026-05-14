@@ -305,6 +305,7 @@ fn bounds_check_field_access(
             "static memories require the ability to use virtual memory"
         );
         return Reachable(compute_addr(
+            env,
             &mut builder.cursor(),
             heap,
             env.pointer_type(),
@@ -317,6 +318,7 @@ fn bounds_check_field_access(
     // in-bounds on this memory, no bounds checks necessary.
     if statically_in_bounds {
         return Reachable(compute_addr(
+            env,
             &mut builder.cursor(),
             heap,
             env.pointer_type(),
@@ -497,7 +499,7 @@ fn get_dynamic_heap_bound(
         Some(max_size) => builder.ins().iconst(env.pointer_type(), max_size as i64),
 
         // Load the heap bound from its global variable.
-        _ => builder.ins().global_value(env.pointer_type(), heap.bound),
+        _ => env.build_global_value(builder, env.pointer_type(), heap.bound),
     }
 }
 
@@ -585,7 +587,7 @@ fn explicit_check_oob_condition_and_compute_addr(
     }
     let addr_ty = env.pointer_type();
 
-    let mut addr = compute_addr(&mut builder.cursor(), heap, addr_ty, index, offset);
+    let mut addr = compute_addr(env, &mut builder.cursor(), heap, addr_ty, index, offset);
 
     if let OobBehavior::ConditionallyLoadFromZero {
         select_spectre_guard,
@@ -623,6 +625,7 @@ fn explicit_check_oob_condition_and_compute_addr(
 /// * `index` - the raw wasm index, of type `addr_ty`
 /// * `offset` - a static offset to add to `index`
 pub fn compute_addr(
+    env: &mut FuncEnvironment<'_>,
     pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
@@ -631,7 +634,7 @@ pub fn compute_addr(
 ) -> ir::Value {
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
-    let heap_base = pos.ins().global_value(addr_ty, heap.base);
+    let heap_base = env.build_global_value(pos, addr_ty, heap.base);
     let base_and_index = pos.ins().iadd(heap_base, index);
 
     if offset == 0 {

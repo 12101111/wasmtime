@@ -94,9 +94,18 @@ pub(crate) fn build_module_artifacts<T: FinishedObject>(
         needs_gc_heap,
         compiled_funcs,
         indices,
+        #[cfg(feature = "profiler")]
+        profile,
+        #[cfg(feature = "profiler")]
+        line_offsets,
     } = unlinked_compile_outputs.pre_link();
     translation.module.needs_gc_heap |= needs_gc_heap;
 
+    #[cfg(feature = "profiler")]
+    {
+        translation.profile = Some(profile);
+        translation.line_offsets = line_offsets;
+    }
     // Emplace all compiled functions into the object file with any other
     // sections associated with code as well.
     let mut object = compiler.object(ObjectKind::Module)?;
@@ -190,6 +199,7 @@ pub(crate) fn build_component_artifacts<T: FinishedObject>(
         needs_gc_heap,
         compiled_funcs,
         indices,
+        ..
     } = unlinked_compile_outputs.pre_link();
     for (_, t) in &mut module_translations {
         t.module.needs_gc_heap |= needs_gc_heap
@@ -1070,10 +1080,22 @@ impl UnlinkedCompileOutputs<'_> {
         let mut indices = FunctionIndices::default();
         let mut needs_gc_heap = false;
 
+        #[cfg(feature = "profiler")]
+        let mut profile = wa2x_testabi::ProfileInfo::new(format!("module"));
+        #[cfg(feature = "profiler")]
+        let mut line_offsets = HashMap::new();
+
         // NB: Iteration over this `BTreeMap` ensures that we uphold
         // `compiled_func`'s sorted property.
         for output in self.outputs.into_values() {
+            log::debug!("output {}: {:?}", output.symbol, output.key);
             needs_gc_heap |= output.function.needs_gc_heap;
+
+            #[cfg(feature = "profiler")]
+            if let Some(func_profile) = output.function.profile {
+                let line_offset = profile.append_func_profile(func_profile);
+                line_offsets.insert(output.key, line_offset);
+            }
 
             let index = compiled_funcs.len();
             compiled_funcs.push((output.symbol, output.key, output.function.code));
@@ -1091,6 +1113,10 @@ impl UnlinkedCompileOutputs<'_> {
             needs_gc_heap,
             compiled_funcs,
             indices,
+            #[cfg(feature = "profiler")]
+            profile,
+            #[cfg(feature = "profiler")]
+            line_offsets,
         }
     }
 }
@@ -1106,6 +1132,12 @@ struct PreLinkOutput {
     /// The `FunctionIndices` mapping our function keys to indices in that flat
     /// list.
     indices: FunctionIndices,
+    /// Module-level profile info collected from all compiled functions
+    #[cfg(feature = "profiler")]
+    profile: wa2x_testabi::ProfileInfo,
+    /// Line offsets for each function within the module's virtual source code.
+    #[cfg(feature = "profiler")]
+    line_offsets: HashMap<FuncKey, u32>,
 }
 
 #[derive(Default)]
@@ -1146,15 +1178,15 @@ impl FunctionIndices {
         )?;
 
         // If requested, generate and add DWARF information.
-        if tunables.debug_native {
+        if tunables.debug_native || tunables.enable_profile {
             compiler.append_dwarf(
                 &mut obj,
                 &translations,
-                &|module, func| {
-                    let i = self.indices[&FuncKey::DefinedWasmFunction(module, func)];
-                    let (symbol, _) = symbol_ids_and_locs[i];
-                    let (_, _, compiled_func) = &compiled_funcs[i];
-                    (symbol, &**compiled_func)
+                &|key| {
+                    let i = self.indices.get(&key)?;
+                    let (symbol, _) = symbol_ids_and_locs[*i];
+                    let (_, _, compiled_func) = &compiled_funcs[*i];
+                    Some((symbol, &**compiled_func))
                 },
                 dwarf_package_bytes,
                 tunables,

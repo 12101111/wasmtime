@@ -45,6 +45,8 @@ mod debug;
 mod func_environ;
 mod translate;
 mod trap;
+#[cfg(feature = "profiler")]
+mod profile;
 
 use self::compiler::Compiler;
 
@@ -456,4 +458,51 @@ enum Reachability<T> {
     /// unreachable. It is the receiver of this value's responsibility to update
     /// `FuncTranslationStacks::reachable` as necessary.
     Unreachable,
+}
+
+pub trait ProfileBuilder {
+    type Builder<'s>: ir::InstBuilder<'s> where Self: 's;
+    fn set_srcloc(&mut self, srcloc: ir::SourceLoc);
+    fn ins<'s>(&'s mut self) -> Self::Builder<'s>;
+}
+
+impl<'a> ProfileBuilder for cranelift_frontend::FunctionBuilder<'a> {
+    type Builder<'s> = cranelift_frontend::FuncInstBuilder<'s, 'a> where Self: 's;
+    fn set_srcloc(&mut self, srcloc: ir::SourceLoc) {
+        self.set_srcloc(srcloc);
+    }
+    fn ins<'s>(&'s mut self) -> Self::Builder<'s> {
+        self.ins()
+    }
+}
+
+impl<'f> ProfileBuilder for FuncCursor<'f> {
+    type Builder<'s> = ir::InsertBuilder<'s, &'s mut Self> where Self: 's;
+    fn set_srcloc(&mut self, srcloc: ir::SourceLoc) {
+        use cranelift_codegen::cursor::Cursor;
+        <Self as Cursor>::set_srcloc(self, srcloc);
+    }
+    fn ins<'s>(&'s mut self) -> Self::Builder<'s> {
+        self.ins()
+    }
+}
+
+#[macro_export]
+macro_rules! append_profile_inst {
+    ($self: expr, $builder: expr, $kind: ident) => {
+        #[cfg(feature = "profiler")]
+        {
+            $self.append_profile_inst($builder, wa2x_testabi::InstKind::$kind);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! append_profile_default_inst {
+    ($self: expr, $builder: expr) => {
+        #[cfg(feature = "profiler")]
+        {
+            $self.append_profile_default_inst($builder);
+        }
+    };
 }

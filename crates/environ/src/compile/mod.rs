@@ -175,6 +175,9 @@ pub struct CompiledFunctionBody {
     /// Whether the compiled function needs a GC heap to run; that is, whether
     /// it reads a struct field, allocates, an array, or etc...
     pub needs_gc_heap: bool,
+    /// Virtual source code mapping for this function, when profiling is enabled.
+    #[cfg(feature = "profiler")]
+    pub profile: Option<wa2x_testabi::FuncProfileInfo>,
 }
 
 /// An implementation of a compiler which can compile WebAssembly functions to
@@ -414,10 +417,7 @@ pub trait Compiler: Send + Sync {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()>;

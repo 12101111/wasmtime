@@ -23,6 +23,8 @@ use wasmparser::{
     FuncToValidate, FunctionBody, KnownCustom, NameSectionReader, Naming, Parser, Payload, TypeRef,
     Validator, ValidatorResources, types::Types,
 };
+#[cfg(feature = "profiler")]
+use wa2x_testabi::ProfileInfo;
 
 /// Object containing the standalone environment information.
 pub struct ModuleEnvironment<'a, 'data> {
@@ -78,6 +80,14 @@ pub struct ModuleTranslation<'data> {
 
     /// DWARF debug information, if enabled, parsed from the module.
     pub debuginfo: DebugInfoData<'data>,
+
+    /// Module level profiler state for virtual source code mapping.
+    #[cfg(feature = "profiler")]
+    pub profile: Option<ProfileInfo>,
+
+    /// Line offsets for each function within the module's virtual source code.
+    #[cfg(feature = "profiler")]
+    pub line_offsets: HashMap<FuncKey, u32>,
 
     /// Set if debuginfo was found but it was not parsed due to `Tunables`
     /// configuration.
@@ -194,6 +204,10 @@ impl<'data> ModuleTranslation<'data> {
             known_imported_functions: SecondaryMap::default(),
             exported_signatures: Vec::default(),
             debuginfo: DebugInfoData::default(),
+            #[cfg(feature = "profiler")]
+            profile: None,
+            #[cfg(feature = "profiler")]
+            line_offsets: HashMap::new(),
             has_unparsed_debuginfo: false,
             data_align: None,
             runtime_data: Default::default(),

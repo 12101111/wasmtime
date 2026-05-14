@@ -67,7 +67,26 @@ impl FuncTranslator {
         debug_assert_eq!(func.dfg.num_insts(), 0, "Function must be empty");
 
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
-        builder.set_srcloc(cur_srcloc(&reader));
+        let skip_srcloc =
+            cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(&reader));
+        }
+        // Initialize profile state for this function, if profiling is enabled.
+        #[cfg(feature = "profiler")]
+        {
+            use crate::profile::ProfileState;
+
+            let func_name = format!("{}", builder.func.name);
+            let profile =
+                ProfileState::new(func_name, reader.current_position().try_into().unwrap());
+            builder
+                .func
+                .params
+                .ensure_base_srcloc(profile.current_srcloc());
+            environ.profile = Some(profile)
+        }
+
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -90,6 +109,7 @@ impl FuncTranslator {
             .initialize(&builder.func.signature, exit_block);
 
         parse_local_decls(&mut reader, &mut builder, num_params, environ, validator)?;
+
         parse_function_body(validator, reader, &mut builder, environ)?;
 
         builder.finalize();
@@ -169,8 +189,12 @@ fn parse_local_decls(
     let mut next_local = num_params;
     let local_count = reader.read_var_u32()?;
 
+    let skip_srcloc =
+        cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
     for _ in 0..local_count {
-        builder.set_srcloc(cur_srcloc(reader));
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(reader));
+        }
         let pos = reader.original_position();
         let count = reader.read_var_u32()?;
         let ty = reader.read()?;
@@ -272,14 +296,30 @@ fn parse_function_body(
     let mut reader = OperatorsReader::new(reader);
     let mut operand_types = vec![];
 
+    let skip_srcloc =
+        cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
     while !reader.eof() {
         let pos = reader.original_position();
-        builder.set_srcloc(cur_srcloc(&reader.get_binary_reader()));
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(&reader.get_binary_reader()));
+        }
 
         let op = reader.read()?;
-        environ.next_srcloc = cur_srcloc(&reader.get_binary_reader());
+        if !skip_srcloc {
+            environ.next_srcloc = cur_srcloc(&reader.get_binary_reader());
+        }
         let operand_types =
             validate_op_and_get_operand_types(validator, environ, &mut operand_types, &op, pos)?;
+
+        #[cfg(feature = "profiler")]
+        if environ.tunables().enable_profile {
+            environ.append_profile_opkind(
+                builder,
+                wa2x_testabi::OperatorKind::from(&op),
+                pos.try_into().unwrap(),
+            );
+            environ.next_srcloc = environ.profile.as_ref().unwrap().current_srcloc();
+        }
 
         environ.before_translate_operator(&op, operand_types, builder)?;
         translate_operator(validator, &op, operand_types, builder, environ)?;
@@ -299,7 +339,7 @@ fn parse_function_body(
             let mut returns = core::mem::take(&mut environ.stacks.stack);
             environ.handle_before_return(&returns, builder);
             bitcast_wasm_returns(&mut returns, builder);
-            builder.ins().return_(&returns);
+            environ.build_return(builder, &returns);
         }
     }
 

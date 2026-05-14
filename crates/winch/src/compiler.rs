@@ -163,6 +163,8 @@ impl wasmtime_environ::Compiler for Compiler {
             code: box_dyn_any_compiled_function(func),
             // TODO: Winch doesn't support GC objects and stack maps and all that yet.
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 
@@ -211,9 +213,8 @@ impl wasmtime_environ::Compiler for Compiler {
         _obj: &mut Object<'_>,
         _translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
         _get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+            FuncKey,
+        ) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         _dwarf_package_bytes: Option<&'a [u8]>,
         _tunables: &'a Tunables,
     ) -> Result<()> {
@@ -316,9 +317,8 @@ impl wasmtime_environ::Compiler for NoInlineCompiler {
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
         get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+            FuncKey,
+        ) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()> {

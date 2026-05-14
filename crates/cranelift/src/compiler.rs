@@ -1,9 +1,11 @@
-use crate::TRAP_INTERNAL_ASSERT;
 use crate::debug::DwarfSectionRelocTarget;
 use crate::func_environ::FuncEnvironment;
+#[cfg(feature = "profiler")]
+use crate::profile::ProfileState;
 use crate::translate::FuncTranslator;
 use crate::{BuiltinFunctionSignatures, builder::LinkOptions, wasm_call_signature};
 use crate::{CompiledFunction, ModuleTextBuilder, array_call_signature};
+use crate::{TRAP_INTERNAL_ASSERT, append_profile_default_inst, append_profile_inst};
 use cranelift_codegen::binemit::CodeOffset;
 use cranelift_codegen::inline::InlineCommand;
 use cranelift_codegen::ir::condcodes::IntCC;
@@ -212,6 +214,15 @@ impl Compiler {
         let mut compiler = self.function_compiler();
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_call_sig);
         let (mut builder, block0) = compiler.builder(func);
+        #[cfg(feature = "profiler")]
+        let mut profile =
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         let args = builder.func.dfg.block_params(block0).to_vec();
         let callee_vmctx = args[0];
@@ -227,13 +238,16 @@ impl Compiler {
             wasmtime_environ::VMCONTEXT_MAGIC,
         );
         let ptr = isa.pointer_bytes();
+        append_profile_inst!(profile, &mut builder, Load);
         let vm_store_context = builder.ins().load(
             pointer_type,
             MemFlagsData::trusted(),
             caller_vmctx,
             i32::from(ptr.vmcontext_store_context()),
         );
+        append_profile_inst!(profile, &mut builder, Store);
         save_last_wasm_exit_fp_and_pc(&mut builder, pointer_type, &ptr, vm_store_context);
+        append_profile_default_inst!(profile, &mut builder);
 
         // Spill all wasm arguments to the stack in `ValRaw` slots.
         let (args_base, args_len) =
@@ -243,15 +257,18 @@ impl Compiler {
         // Load the actual callee out of the
         // `VMArrayCallHostFuncContext::host_func`.
         let ptr_size = isa.pointer_bytes();
+        append_profile_inst!(profile, &mut builder, Load);
         let callee = builder.ins().load(
             pointer_type,
             MemFlagsData::trusted(),
             callee_vmctx,
             ptr_size.vmarray_call_host_func_context_func_ref() + ptr_size.vm_func_ref_array_call(),
         );
+        append_profile_default_inst!(profile, &mut builder);
 
         // Do an indirect call to the callee.
         let callee_signature = builder.func.import_signature(array_call_sig);
+        append_profile_inst!(profile, &mut builder, CallIndirect);
         let call = self.call_indirect_host(
             &mut builder,
             HostCall::ArrayCall,
@@ -259,6 +276,7 @@ impl Compiler {
             callee,
             &[callee_vmctx, caller_vmctx, args_base, args_len],
         );
+        append_profile_default_inst!(profile, &mut builder);
 
         // Increment the "execution version" on the VMStoreContext if
         // guest debugging is enabled.
@@ -286,17 +304,23 @@ impl Compiler {
 
         // Invoke `raise` if the callee (host) returned an error.
         let succeeded = builder.func.dfg.inst_results(call)[0];
+        append_profile_inst!(profile, &mut builder, Branch);
         self.raise_if_host_trapped(&mut builder, caller_vmctx, succeeded);
 
         // Return results from the array as native return values.
+        append_profile_inst!(profile, &mut builder, Load);
         let results =
             self.load_values_from_array(wasm_func_ty.results(), &mut builder, args_base, args_len);
+        append_profile_inst!(profile, &mut builder, Return);
         builder.ins().return_(&results);
+        append_profile_default_inst!(profile, &mut builder);
         builder.finalize();
 
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 
@@ -330,24 +354,38 @@ impl Compiler {
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_sig.clone());
         let (mut builder, block0) = compiler.builder(func);
         let vmctx = builder.block_params(block0)[0];
+        #[cfg(feature = "profiler")]
+        let mut profile =
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         // Debug-assert that this is the right kind of vmctx, and then
         // additionally perform the "routine of the exit trampoline" of saving
         // fp/pc/etc.
         self.debug_assert_vmctx_kind(&mut builder, vmctx, wasmtime_environ::VMCONTEXT_MAGIC);
+        append_profile_inst!(profile, &mut builder, Load);
         let vm_store_context = builder.ins().load(
             pointer_type,
             MemFlagsData::trusted(),
             vmctx,
             ptr_size.vmcontext_store_context(),
         );
+        append_profile_inst!(profile, &mut builder, Store);
         save_last_wasm_exit_fp_and_pc(&mut builder, pointer_type, &ptr_size, vm_store_context);
+        append_profile_default_inst!(profile, &mut builder);
 
         // Now it's time to delegate to the actual builtin. Forward all our own
         // arguments to the libcall itself.
+        append_profile_inst!(profile, &mut builder, Call);
         let args = builder.block_params(block0).to_vec();
         let call = self.call_builtin(&mut builder, vmctx, &args, builtin_func_index, host_sig);
         let results = builder.func.dfg.inst_results(call).to_vec();
+        append_profile_default_inst!(profile, &mut builder);
 
         // Libcalls do not explicitly jump/raise on traps but instead return a
         // code indicating whether they trapped or not. This means that it's the
@@ -355,6 +393,7 @@ impl Compiler {
         // value and raise a trap as appropriate. With the `results` above check
         // what `index` is and for each libcall that has a trapping return value
         // process it here.
+        append_profile_inst!(profile, &mut builder, Branch);
         match builtin_func_index.trap_sentinel() {
             Some(TrapSentinel::Falsy) => {
                 self.raise_if_host_trapped(&mut builder, vmctx, results[0]);
@@ -382,18 +421,23 @@ impl Compiler {
             }
             None => {}
         }
+        append_profile_default_inst!(profile, &mut builder);
 
+        append_profile_inst!(profile, &mut builder, Return);
         // And finally, return all the results of this libcall.
         if !wasm_sig.returns.is_empty() {
             builder.ins().return_(&results);
         } else {
             builder.ins().return_(&[]);
         }
+        append_profile_default_inst!(profile, &mut builder);
         builder.finalize();
 
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 
@@ -593,6 +637,8 @@ impl wasmtime_environ::Compiler for Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap,
+            #[cfg(feature = "profiler")]
+            profile: func_env.profile.take().map(|state| state.into_info()),
         })
     }
 
@@ -858,24 +904,21 @@ impl wasmtime_environ::Compiler for Compiler {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()> {
         log::trace!("appending DWARF debug info");
 
-        let get_func = move |m, f| {
-            let (sym, any) = get_func(m, f);
-            log::trace!("get_func({m:?}, {f:?}) -> ({sym:?}, {any:#p})");
+        let get_func = move |key: FuncKey| {
+            let (sym, any) = get_func(key)?;
+            log::trace!("get_func({key:?}) -> ({sym:?}, {any:#p})");
             debug_assert!(!any.is::<Option<CompilerContext>>());
             debug_assert!(any.is::<CompiledFunction>());
-            (
+            Some((
                 sym,
                 any.downcast_ref::<CompiledFunction>().unwrap().metadata(),
-            )
+            ))
         };
 
         let mut compilation = crate::debug::Compilation::new(
@@ -1409,9 +1452,20 @@ impl Compiler {
         let mut compiler = self.function_compiler();
         let func = ir::Function::with_name_signature(key_to_name(trampoline_key), array_call_sig);
         let (mut builder, block0) = compiler.builder(func);
+        #[cfg(feature = "profiler")]
+        let mut profile =
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::A2WTrampoline, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         let try_call_block = builder.create_block();
+        append_profile_inst!(profile, &mut builder, Jump);
         builder.ins().jump(try_call_block, []);
+        append_profile_default_inst!(profile, &mut builder);
         builder.switch_to_block(try_call_block);
 
         let (vmctx, caller_vmctx, values_vec_ptr, values_vec_len) = {
@@ -1419,6 +1473,7 @@ impl Compiler {
             (params[0], params[1], params[2], params[3])
         };
 
+        append_profile_inst!(profile, &mut builder, Load);
         // First load the actual arguments out of the array.
         let mut args = self.load_values_from_array(
             callee_sig.params(),
@@ -1426,6 +1481,7 @@ impl Compiler {
             values_vec_ptr,
             values_vec_len,
         );
+        append_profile_default_inst!(profile, &mut builder);
         args.insert(0, caller_vmctx);
         args.insert(0, vmctx);
 
@@ -1434,6 +1490,7 @@ impl Compiler {
         // Assert that we were really given a core Wasm vmctx, since that's
         // what we are assuming with our offsets below.
         self.debug_assert_vmctx_kind(&mut builder, vmctx, expected_vmctx_magic);
+        append_profile_inst!(profile, &mut builder, Store);
         save_last_wasm_entry_context(
             &mut builder,
             pointer_type,
@@ -1442,6 +1499,7 @@ impl Compiler {
             vmctx,
             try_call_block,
         );
+        append_profile_default_inst!(profile, &mut builder);
 
         // Create the invocation of wasm, which is notably done with a
         // `try_call` with an exception handler that's used to handle traps.
@@ -1490,7 +1548,9 @@ impl Compiler {
                 &mut dfg.value_lists,
             ))],
         ));
+        append_profile_inst!(profile, &mut builder, Call);
         builder.ins().try_call(callee, &args, exception_table);
+        append_profile_default_inst!(profile, &mut builder);
 
         builder.seal_block(try_call_block);
         builder.seal_block(normal_return);
@@ -1499,6 +1559,7 @@ impl Compiler {
         // On the normal return path store all the results in the array we were
         // provided and return "true" for "returned successfully".
         builder.switch_to_block(normal_return);
+        append_profile_inst!(profile, &mut builder, Store);
         self.store_values_to_array(
             &mut builder,
             callee_sig.results(),
@@ -1506,21 +1567,28 @@ impl Compiler {
             values_vec_ptr,
             values_vec_len,
         );
+        append_profile_default_inst!(profile, &mut builder);
         let true_return = builder.ins().iconst(ir::types::I8, 1);
+        append_profile_inst!(profile, &mut builder, Return);
         builder.ins().return_(&[true_return]);
+        append_profile_default_inst!(profile, &mut builder);
 
         // On the exceptional return path just return "false" for "did not
         // succeed". Note that register restoration is part of the `try_call`
         // and handler implementation.
         builder.switch_to_block(exceptional_return);
         let false_return = builder.ins().iconst(ir::types::I8, 0);
+        append_profile_inst!(profile, &mut builder, Return);
         builder.ins().return_(&[false_return]);
+        append_profile_default_inst!(profile, &mut builder);
 
         builder.finalize();
 
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 }
@@ -1606,8 +1674,10 @@ impl FunctionCompiler<'_> {
             compiled_function.set_address_map(
                 offset.try_into().unwrap(),
                 len.try_into().unwrap(),
-                tunables.generate_address_map,
+                tunables.generate_address_map || tunables.enable_profile,
             );
+        } else if self.compiler.tunables.enable_profile {
+            compiled_function.set_address_map(0, 0, true);
         }
 
         if isa.flags().unwind_info() {

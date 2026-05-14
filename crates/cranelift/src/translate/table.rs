@@ -2,7 +2,6 @@ use crate::func_environ::FuncEnvironment;
 use crate::trap::TranslateTrap;
 use cranelift_codegen::cursor::FuncCursor;
 use cranelift_codegen::ir::{self, InstBuilder, condcodes::IntCC, immediates::Imm64};
-use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::FunctionBuilder;
 use wasmtime_environ::TableIndex;
 
@@ -24,13 +23,13 @@ pub enum TableSize {
 
 impl TableSize {
     /// Get a CLIF value representing the current bounds of this table.
-    pub fn bound(&self, isa: &dyn TargetIsa, mut pos: FuncCursor, index_ty: ir::Type) -> ir::Value {
+    pub fn bound(&self, env: &mut FuncEnvironment<'_>, mut pos: FuncCursor, index_ty: ir::Type) -> ir::Value {
         match *self {
             // Instead of `i64::try_from(bound)`, here we just want to directly interpret `bound` as an i64.
             TableSize::Static { bound } => pos.ins().iconst(index_ty, Imm64::new(bound as i64)),
             TableSize::Dynamic { bound_gv } => {
-                let ty = pos.func.global_values[bound_gv].global_type(isa);
-                let gv = pos.ins().global_value(ty, bound_gv);
+                let ty = pos.func.global_values[bound_gv].global_type(env.isa());
+                let gv = env.build_global_value(&mut pos, ty, bound_gv);
                 if index_ty == ty {
                     gv
                 } else if index_ty.bytes() < ty.bytes() {
@@ -73,7 +72,7 @@ impl TableData {
                 && env.clif_memory_traps_enabled();
 
         // Start with the bounds check. Trap if `index + 1 > bound`.
-        let bound = self.bound.bound(env.isa(), pos.cursor(), index_ty);
+        let bound = self.bound.bound(env, pos.cursor(), index_ty);
 
         // `index > bound - 1` is the same as `index >= bound`.
         let oob = pos
@@ -92,7 +91,7 @@ impl TableData {
         }
 
         // Add the table base address base
-        let base = pos.ins().global_value(addr_ty, self.base_gv);
+        let base = env.build_global_value(pos, addr_ty, self.base_gv);
 
         let element_size = self.element_size;
         let offset = if element_size == 1 {

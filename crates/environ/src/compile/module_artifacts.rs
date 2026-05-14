@@ -120,6 +120,8 @@ impl<'a> ObjectBuilder<'a> {
             data_align,
             runtime_data,
             wasm,
+            #[cfg(feature = "profiler")]
+            profile,
             ..
         } = translation;
 
@@ -182,6 +184,23 @@ impl<'a> ObjectBuilder<'a> {
         let mut dwarf = Vec::new();
         if self.tunables.parse_wasm_debuginfo {
             self.push_debuginfo(&mut dwarf, &debuginfo);
+        }
+
+        #[cfg(feature = "profiler")]
+        if self.tunables.enable_profile
+            && let Some(profile) = profile
+        {
+            let inner = profile.module;
+            let multi = wa2x_testabi::MultiModuleProfileInfo {
+                modules: vec![inner]
+            };
+            let profile_data = postcard::to_allocvec(&multi)?;
+            let profile_section = self.obj.add_section(
+                self.obj.segment_name(StandardSegment::Data).to_vec(),
+                obj::ELF_WASMTIME_PROFILE.as_bytes().to_vec(),
+                SectionKind::ReadOnlyData,
+            );
+            self.obj.append_section_data(profile_section, &profile_data, 1);
         }
 
         Ok(CompiledModuleInfo {

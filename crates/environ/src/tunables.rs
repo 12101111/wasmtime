@@ -192,6 +192,10 @@ define_tunables! {
         /// Whether `metadata.code.branch_hint` sections are parsed and used to
         /// mark cold blocks during compilation.
         pub branch_hinting: bool,
+
+        /// Whether to enable the profiler, which generates virtual source code
+        /// mapping between wasm instructions and generated machine code.
+        pub enable_profile: bool,
     }
 
     pub struct ConfigTunables {
@@ -278,6 +282,7 @@ impl Tunables {
             metadata_for_internal_asserts: false,
             metadata_for_gc_heap_corruption: true,
             branch_hinting: false,
+            enable_profile: false,
         }
     }
 
