@@ -3,6 +3,7 @@ pub(crate) mod stack_switching;
 
 use crate::BuiltinFunctionSignatures;
 use crate::compiler::Compiler;
+#[cfg(feature = "profiler")]
 use crate::profile::ProfileState;
 use crate::translate::{
     FuncTranslationStacks, GlobalVariable, Heap, HeapData, StructFieldsVec, TableData, TableSize,
@@ -233,7 +234,8 @@ pub struct FuncEnvironment<'module_environment> {
     pub(crate) next_srcloc: ir::SourceLoc,
 
     /// Function level profiler state for virtual source code mapping.
-    pub(crate) profile: Option<ProfileState>
+    #[cfg(feature = "profiler")]
+    pub(crate) profile: Option<ProfileState>,
 }
 
 impl<'module_environment> FuncEnvironment<'module_environment> {
@@ -583,9 +585,9 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         self.fuel_save_from_var(builder);
         let out_of_gas = self.builtin_functions.out_of_gas(builder.func);
         let vmctx = self.vmctx_val(&mut builder.cursor());
-        builder.ins().call(out_of_gas, &[vmctx]);
+        self.build_call(builder, out_of_gas, &[vmctx]);
         self.fuel_load_into_var(builder);
-        builder.ins().jump(continuation_block, &[]);
+        self.build_jump(builder, continuation_block, &[]);
         builder.seal_block(continuation_block);
 
         builder.switch_to_block(continuation_block);
@@ -677,7 +679,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
     fn epoch_load_current(&mut self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         let addr = builder.use_var(self.epoch_ptr_var);
-        builder.ins().load(
+        self.build_load(
+            builder,
             ir::types::I64,
             ir::MemFlags::trusted(),
             addr,
@@ -714,9 +717,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             cur_epoch_value,
             epoch_deadline,
         );
-        builder
-            .ins()
-            .brif(cmp, new_epoch_block, &[], continuation_block, &[]);
+        self.build_brif(builder, cmp, new_epoch_block, &[], continuation_block, &[]);
         builder.seal_block(new_epoch_block);
 
         builder.switch_to_block(new_epoch_block);
@@ -732,7 +733,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         // in the common case (between epoch ticks) but we want to do a
         // precise check here by reloading the cache first.
         let vmstore_ctx = self.get_vmstore_context_ptr(builder);
-        let deadline = builder.ins().load(
+        let deadline = self.build_load(
+            builder,
             ir::types::I64,
             ir::MemFlags::trusted(),
             vmstore_ctx,
@@ -745,10 +747,10 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         let vmctx = self.vmctx_val(&mut builder.cursor());
         // new_epoch() returns the new deadline, so we don't have to
         // reload it.
-        let call = builder.ins().call(new_epoch, &[vmctx]);
+        let call = self.build_call(builder, new_epoch, &[vmctx]);
         let new_deadline = *builder.func.dfg.inst_results(call).first().unwrap();
         builder.def_var(self.epoch_deadline_var, new_deadline);
-        builder.ins().jump(continuation_block, &[]);
+        self.build_jump(builder, continuation_block, &[]);
         builder.seal_block(continuation_block);
 
         builder.switch_to_block(continuation_block);
@@ -855,7 +857,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         // if null, we take a slow-path that invokes a
         // libcall.
         let (table_entry_addr, flags) = table_data.prepare_table_addr(self, builder, index);
-        let value = builder.ins().load(pointer_type, flags, table_entry_addr, 0);
+        let value = self.build_load(builder, pointer_type, flags, table_entry_addr, 0);
 
         if !self.tunables.table_lazy_init {
             return value;
@@ -879,10 +881,11 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         let result_param = builder.append_block_param(continuation_block, pointer_type);
         builder.set_cold_block(null_block);
 
-        builder.ins().brif(
+        self.build_brif(
+            builder,
             value,
             continuation_block,
-            &[value_masked.into()],
+            &[ir::BlockArg::from(value_masked)],
             null_block,
             &[],
         );
@@ -896,11 +899,13 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             .table_get_lazy_init_func_ref(builder.func);
         let vmctx = self.vmctx_val(&mut builder.cursor());
         let index = self.cast_index_to_i64(&mut builder.cursor(), index, index_type);
-        let call_inst = builder.ins().call(lazy_init, &[vmctx, table_index, index]);
+        let call_inst = self.build_call(builder, lazy_init, &[vmctx, table_index, index]);
         let returned_entry = builder.func.dfg.inst_results(call_inst)[0];
-        builder
-            .ins()
-            .jump(continuation_block, &[returned_entry.into()]);
+        self.build_jump(
+            builder,
+            continuation_block,
+            &[ir::BlockArg::from(returned_entry)],
+        );
         builder.seal_block(continuation_block);
 
         builder.switch_to_block(continuation_block);
@@ -1162,7 +1167,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
                 let address = builder
                     .ins()
                     .stack_addr(self.pointer_type(), slot, offset.offset());
-                builder.ins().store(
+                self.build_store(
+                    builder,
                     self.memflags_for_debug_slot_value_wasm_ty(ty),
                     init,
                     address,
@@ -1215,7 +1221,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
                         builder
                             .ins()
                             .stack_addr(self.pointer_type(), slot, offset.offset());
-                    builder.ins().store(
+                    self.build_store(
+                        builder,
                         self.memflags_for_debug_slot_value_wasm_ty(wasm_ty),
                         value,
                         address,
@@ -1270,7 +1277,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
     /// Store a new value for a local in the state slot, if present.
     pub(crate) fn state_slot_local_set(
-        &self,
+        &mut self,
         builder: &mut FunctionBuilder,
         local: u32,
         value: ir::Value,
@@ -1281,7 +1288,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
                 .ins()
                 .stack_addr(self.pointer_type(), *slot, offset.offset());
             let ty = builder.func.dfg.value_type(value);
-            builder.ins().store(
+            self.build_store(
+                builder,
                 self.memflags_for_debug_slot_value_clif_ty(ty),
                 value,
                 address,
@@ -1301,7 +1309,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             // This is a native-endian store (the only mode for
             // `stack_store`) because it is read by host code directly
             // as a pointer.
-            builder.ins().stack_store(vmctx, slot, 0);
+            self.build_stack_store(builder, vmctx, slot, 0);
         }
     }
 
@@ -1338,6 +1346,49 @@ impl TranslateTrap for FuncEnvironment<'_> {
 
     fn debug_tags(&self, srcloc: ir::SourceLoc) -> Vec<ir::DebugTag> {
         FuncEnvironment::debug_tags(self, srcloc)
+    }
+
+    fn builder_trap(&mut self, builder: &mut FunctionBuilder, trap: ir::TrapCode) {
+        self.build_trap(builder, trap);
+    }
+
+    fn builder_trapz(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        value: ir::Value,
+        trap: ir::TrapCode,
+    ) {
+        self.build_trapz(builder, value, trap);
+    }
+
+    fn builder_trapnz(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        value: ir::Value,
+        trap: ir::TrapCode,
+    ) {
+        self.build_trapnz(builder, value, trap);
+    }
+
+    fn builder_brif<'a>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        cond: ir::Value,
+        block_then: ir::Block,
+        args_then: impl IntoIterator<Item = &'a ir::BlockArg>,
+        block_else: ir::Block,
+        args_else: impl IntoIterator<Item = &'a ir::BlockArg>,
+    ) -> ir::Inst {
+        self.build_brif(builder, cond, block_then, args_then, block_else, args_else)
+    }
+
+    fn builder_call(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        callee: ir::FuncRef,
+        args: &[ir::Value],
+    ) -> ir::Inst {
+        self.build_call(builder, callee, args)
     }
 }
 
@@ -1704,7 +1755,7 @@ impl FuncEnvironment<'_> {
             // Our own tag -- we only need to get our instance ID.
             let builtin = self.builtin_functions.get_instance_id(builder.func);
             let vmctx = self.vmctx_val(&mut builder.cursor());
-            let call = builder.ins().call(builtin, &[vmctx]);
+            let call = self.build_call(builder, builtin, &[vmctx]);
             let instance_id = builder.func.dfg.inst_results(call)[0];
             let tag_id = builder
                 .ins()
@@ -1716,20 +1767,22 @@ impl FuncEnvironment<'_> {
             let vmctx_tag_index_offset = self.offsets.vmctx_vmtag_import_index(tag_index);
             let vmctx = self.vmctx_val(&mut builder.cursor());
             let pointer_type = self.pointer_type();
-            let from_vmctx = builder.ins().load(
+            let from_vmctx = self.build_load(
+                builder,
                 pointer_type,
                 MemFlags::trusted().with_readonly(),
                 vmctx,
                 i32::try_from(vmctx_tag_vmctx_offset).unwrap(),
             );
-            let index = builder.ins().load(
+            let index = self.build_load(
+                builder,
                 I32,
                 MemFlags::trusted().with_readonly(),
                 vmctx,
                 i32::try_from(vmctx_tag_index_offset).unwrap(),
             );
             let builtin = self.builtin_functions.get_instance_id(builder.func);
-            let call = builder.ins().call(builtin, &[from_vmctx]);
+            let call = self.build_call(builder, builtin, &[from_vmctx]);
             let from_instance_id = builder.func.dfg.inst_results(call)[0];
             (from_instance_id, index)
         }
@@ -1836,10 +1889,12 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
         // First append the callee vmctx address.
         let vmctx_offset =
             i32::try_from(self.env.offsets.vmctx_vmfunction_import_vmctx(callee_index)).unwrap();
+        append_profile_inst!(self.env, self.builder, Load);
         let callee_vmctx = self
             .builder
             .ins()
             .load(pointer_type, mem_flags, base, vmctx_offset);
+        append_profile_default_inst!(self.env, self.builder);
         real_call_args.push(callee_vmctx);
         real_call_args.push(caller_vmctx);
 
@@ -1878,10 +1933,12 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             // and with different functions. Either way, we have to do the
             // indirect call.
             None => {
+                append_profile_inst!(self.env, self.builder, Load);
                 let func_addr = self
                     .builder
                     .ins()
                     .load(pointer_type, mem_flags, base, body_offset);
+                append_profile_default_inst!(self.env, self.builder);
                 Ok(self.indirect_call_inst(sig_ref, func_addr, &real_call_args))
             }
         }
@@ -2012,7 +2069,8 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
                     // anyway.
                     if table.ref_type.nullable {
                         if self.env.clif_memory_traps_enabled() {
-                            self.builder.ins().load(
+                            self.env.build_load(
+                                self.builder,
                                 sig_id_type,
                                 ir::MemFlags::trusted()
                                     .with_readonly()
@@ -2069,9 +2127,12 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
 
         // Load the caller's `VMSharedTypeIndex.
         let interned_ty = self.env.module.types[ty_index].unwrap_module_type_index();
+
+        append_profile_inst!(self.env, self.builder, Load);
         let caller_sig_id = self
             .env
             .module_interned_to_shared_ty(&mut self.builder.cursor(), interned_ty);
+        append_profile_default_inst!(self.env, self.builder);
 
         // Load the callee's `VMSharedTypeIndex`.
         //
@@ -2084,9 +2145,11 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             self.env
                 .trapz(self.builder, funcref_ptr, crate::TRAP_INDIRECT_CALL_TO_NULL);
         }
+        append_profile_inst!(self.env, self.builder, Load);
         let callee_sig_id =
             self.env
                 .load_funcref_type_index(&mut self.builder.cursor(), mem_flags, funcref_ptr);
+        append_profile_default_inst!(self.env, self.builder);
 
         // Check that they match: in the case of Wasm GC, this means doing a
         // full subtype check. Otherwise, we do a simple equality check.
@@ -2167,13 +2230,15 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
                 self.env.trapz(self.builder, callee, trap);
             }
         }
-        let func_addr = self.builder.ins().load(
+        let func_addr = self.env.build_load(
+            self.builder,
             pointer_type,
             callee_flags,
             callee,
             i32::from(self.env.offsets.ptr.vm_func_ref_wasm_call()),
         );
-        let callee_vmctx = self.builder.ins().load(
+        let callee_vmctx = self.env.build_load(
+            self.builder,
             pointer_type,
             mem_flags,
             callee,
@@ -2290,7 +2355,7 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             self.attach_tags(inst);
             results
         } else {
-            let inst = self.builder.ins().call(callee, args);
+            let inst = self.env.build_call(self.builder, callee, args);
             let results = self.results_from_call_inst(inst);
             self.handle_call_result_stackmap(&results, sig_ref);
             self.attach_tags(inst);
@@ -2322,7 +2387,9 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             self.attach_tags(inst);
             results
         } else {
-            let inst = self.builder.ins().call_indirect(sig_ref, func_addr, args);
+            let inst = self
+                .env
+                .build_call_indirect(self.builder, sig_ref, func_addr, args);
             let results = self.results_from_call_inst(inst);
             self.handle_call_result_stackmap(&results, sig_ref);
             self.attach_tags(inst);
@@ -2440,6 +2507,7 @@ impl FuncEnvironment<'_> {
             }
         };
 
+        // TODO: ignore profile since table.grow is not used in lime1
         let call_inst = pos.ins().call(grow, &args);
         let result = builder.func.dfg.first_result(call_inst);
 
@@ -2572,6 +2640,7 @@ impl FuncEnvironment<'_> {
         };
 
         args.push(len);
+        // TODO: ignore profile since table.fill is not used in lime1
         builder.ins().call(libcall, &args);
 
         Ok(())
@@ -3005,7 +3074,7 @@ impl FuncEnvironment<'_> {
                 }
                 // Put globals in the "table" abstract heap category as well.
                 flags.set_alias_region(Some(ir::AliasRegion::Table));
-                Ok(builder.ins().load(ty, flags, addr, offset))
+                Ok(self.build_load(builder, ty, flags, addr, offset))
             }
             GlobalVariable::Custom => {
                 let global_ty = self.module.globals[global_index];
@@ -3057,7 +3126,7 @@ impl FuncEnvironment<'_> {
                 // Put globals in the "table" abstract heap category as well.
                 flags.set_alias_region(Some(ir::AliasRegion::Table));
                 debug_assert_eq!(ty, builder.func.dfg.value_type(val));
-                builder.ins().store(flags, val, addr, offset);
+                self.build_store(builder, flags, val, addr, offset);
                 self.update_global(builder, global_index, val);
             }
             GlobalVariable::Custom => {
@@ -3195,7 +3264,7 @@ impl FuncEnvironment<'_> {
             // the import definition itself.
             None => {
                 let vmimport = self.offsets.vmctx_vmmemory_import(index);
-
+                // TODO: ignore imported memory for profiler
                 let vmctx = pos.ins().load(
                     self.isa.pointer_type(),
                     ir::MemFlags::trusted(),
@@ -3265,6 +3334,14 @@ impl FuncEnvironment<'_> {
 
         let index_type = self.memory(index).idx_type;
         let val = self.cast_index_to_i64(&mut pos, val, index_type);
+        #[cfg(feature = "profiler")]
+        if let Some(profile) = &mut self.profile {
+            use cranelift_codegen::cursor::Cursor;
+
+            let loc = std::panic::Location::caller();
+            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
+            pos.set_srcloc(profile.srcloc_for_column(column));
+        }
         let call_inst = pos
             .ins()
             .call(memory_grow, &[memory_vmctx, val, defined_memory_index]);
@@ -3296,6 +3373,7 @@ impl FuncEnvironment<'_> {
                 if is_shared {
                     let offset =
                         i32::try_from(self.offsets.vmctx_vmmemory_pointer(def_index)).unwrap();
+                    // TODO: ignore shared memory for profiler
                     let vmmemory_ptr =
                         pos.ins()
                             .load(pointer_type, ir::MemFlags::trusted(), base, offset);
@@ -3321,6 +3399,14 @@ impl FuncEnvironment<'_> {
                             .vmctx_vmmemory_definition_current_length(owned_index),
                     )
                     .unwrap();
+                    #[cfg(feature = "profiler")]
+                    if let Some(profile) = &mut self.profile {
+                        use cranelift_codegen::cursor::Cursor;
+
+                        let loc = std::panic::Location::caller();
+                        let column = profile.append_inst(wa2x_testabi::InstKind::Load, loc);
+                        pos.set_srcloc(profile.srcloc_for_column(column));
+                    }
                     pos.ins()
                         .load(pointer_type, ir::MemFlags::trusted(), base, offset)
                 }
@@ -3341,6 +3427,14 @@ impl FuncEnvironment<'_> {
                         vmmemory_definition_ptr,
                     )
                 } else {
+                    #[cfg(feature = "profiler")]
+                    if let Some(profile) = &mut self.profile {
+                        use cranelift_codegen::cursor::Cursor;
+
+                        let loc = std::panic::Location::caller();
+                        let column = profile.append_inst(wa2x_testabi::InstKind::Load, loc);
+                        pos.set_srcloc(profile.srcloc_for_column(column));
+                    }
                     pos.ins().load(
                         pointer_type,
                         ir::MemFlags::trusted(),
@@ -3395,6 +3489,14 @@ impl FuncEnvironment<'_> {
         };
         let src_index = pos.ins().iconst(I32, i64::from(src_index.as_u32()));
         let dst_index = pos.ins().iconst(I32, i64::from(dst_index.as_u32()));
+        #[cfg(feature = "profiler")]
+        if let Some(profile) = &mut self.profile {
+            use cranelift_codegen::cursor::Cursor;
+
+            let loc = std::panic::Location::caller();
+            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
+            pos.set_srcloc(profile.srcloc_for_column(column));
+        }
         pos.ins()
             .call(memory_copy, &[vmctx, dst_index, dst, src_index, src, len]);
 
@@ -3416,6 +3518,14 @@ impl FuncEnvironment<'_> {
         let (memory_vmctx, defined_memory_index) =
             self.memory_vmctx_and_defined_index(&mut pos, memory_index);
 
+        #[cfg(feature = "profiler")]
+        if let Some(profile) = &mut self.profile {
+            use cranelift_codegen::cursor::Cursor;
+
+            let loc = std::panic::Location::caller();
+            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
+            pos.set_srcloc(profile.srcloc_for_column(column));
+        }
         pos.ins().call(
             memory_fill,
             &[memory_vmctx, defined_memory_index, dst, val, len],
@@ -3443,6 +3553,14 @@ impl FuncEnvironment<'_> {
 
         let dst = self.cast_index_to_i64(&mut pos, dst, self.memory(memory_index).idx_type);
 
+        #[cfg(feature = "profiler")]
+        if let Some(profile) = &mut self.profile {
+            use cranelift_codegen::cursor::Cursor;
+
+            let loc = std::panic::Location::caller();
+            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
+            pos.set_srcloc(profile.srcloc_for_column(column));
+        }
         pos.ins().call(
             memory_init,
             &[vmctx, memory_index_arg, seg_index_arg, dst, src, len],
@@ -3719,7 +3837,11 @@ impl FuncEnvironment<'_> {
 
     /// Append an operator kind to the profile and set the builder srcloc.
     #[cfg(feature = "profiler")]
-    pub fn append_profile_opkind(&mut self, builder: &mut FunctionBuilder, op: wa2x_testabi::OperatorKind) {
+    pub fn append_profile_opkind(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        op: wa2x_testabi::OperatorKind,
+    ) {
         if let Some(profile) = &mut self.profile {
             profile.append_opkind(op);
             builder.set_srcloc(profile.reset_column());
@@ -3729,7 +3851,11 @@ impl FuncEnvironment<'_> {
     /// Set the builder's srcloc for the given inst kind.
     #[cfg(feature = "profiler")]
     #[track_caller]
-    pub fn append_profile_inst(&mut self, builder: &mut FunctionBuilder, kind: wa2x_testabi::InstKind) {
+    pub fn append_profile_inst(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        kind: wa2x_testabi::InstKind,
+    ) {
         if let Some(profile) = &mut self.profile {
             let loc = std::panic::Location::caller();
             let column = profile.append_inst(kind, loc);
@@ -3963,7 +4089,9 @@ impl FuncEnvironment<'_> {
         args_else: impl IntoIterator<Item = &'a ir::BlockArg>,
     ) -> ir::Inst {
         append_profile_inst!(self, builder, Branch);
-        let result = builder.ins().brif(cond, block_then, args_then, block_else, args_else);
+        let result = builder
+            .ins()
+            .brif(cond, block_then, args_then, block_else, args_else);
         append_profile_default_inst!(self, builder);
         result
     }
@@ -4009,11 +4137,7 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_return(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        vals: &[ir::Value],
-    ) -> ir::Inst {
+    pub fn build_return(&mut self, builder: &mut FunctionBuilder, vals: &[ir::Value]) -> ir::Inst {
         append_profile_inst!(self, builder, Return);
         let result = builder.ins().return_(vals);
         append_profile_default_inst!(self, builder);

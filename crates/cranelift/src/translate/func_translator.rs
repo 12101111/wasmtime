@@ -300,7 +300,7 @@ fn parse_function_body(
             let mut returns = core::mem::take(&mut environ.stacks.stack);
             environ.handle_before_return(&returns, builder);
             bitcast_wasm_returns(&mut returns, builder);
-            builder.ins().return_(&returns);
+            environ.build_return(builder, &returns);
         }
     }
 
