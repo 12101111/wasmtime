@@ -432,6 +432,13 @@ impl Config {
         self
     }
 
+    /// Configures whether DWARF based profiler is enable and
+    /// Wa2x profile info will be emitted.
+    pub fn enable_profile(&mut self, enable: bool) -> &mut Self {
+        self.tunables.enable_profile = Some(enable);
+        self
+    }
+
     /// Configures whether compiled guest code will be instrumented to
     /// provide debugging at the Wasm VM level.
     ///
