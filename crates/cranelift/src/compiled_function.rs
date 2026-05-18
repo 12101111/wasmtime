@@ -153,6 +153,28 @@ impl CompiledFunction {
         &self.metadata.address_map
     }
 
+    /// Adjust instruction source locations in the address map for profile mode.
+    ///
+    /// When `enable_profile` is active, `srcloc` values encode `(line, column)`
+    /// pairs using the high 24 bits for the line number. This method adds the
+    /// given `line_offset` to the line number of each non-default instruction
+    /// mapping, converting function-relative line numbers to module-absolute
+    /// line numbers.
+    pub fn adjust_profile_address_map(&mut self, line_offset: u32) {
+        for instr in self.metadata.address_map.instructions.iter_mut() {
+            let bits = match instr.srcloc.file_offset() {
+                Some(b) => b,
+                None => continue,
+            };
+            let line = bits >> 8;
+            let column = bits & 0xff;
+            let new_line = line.saturating_add(line_offset);
+            assert!(new_line < (1 << 24), "absolute line number too large");
+            let new_bits = (new_line << 8) | column;
+            instr.srcloc = FilePos::new(new_bits);
+        }
+    }
+
     /// Create and return the compiled function address map from the original source offset
     /// and length.
     pub fn set_address_map(&mut self, offset: u32, length: u32, with_instruction_addresses: bool) {

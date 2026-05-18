@@ -175,6 +175,9 @@ pub struct CompiledFunctionBody {
     /// Whether the compiled function needs a GC heap to run; that is, whether
     /// it reads a struct field, allocates, an array, or etc...
     pub needs_gc_heap: bool,
+    /// Virtual source code mapping for this function, when profiling is enabled.
+    #[cfg(feature = "profiler")]
+    pub profile: Option<wa2x_testabi::FuncProfileInfo>,
 }
 
 /// An implementation of a compiler which can compile WebAssembly functions to
@@ -336,6 +339,21 @@ pub trait Compiler: Send + Sync {
         funcs: &[(String, FuncKey, Box<dyn Any + Send + Sync>)],
         resolve_reloc: &dyn Fn(usize, FuncKey) -> usize,
     ) -> Result<Vec<(SymbolId, FunctionLoc)>>;
+
+    /// Adjust the source locations in compiled function address maps to use
+    /// module-level absolute line numbers for virtual source code mapping.
+    ///
+    /// The `line_offsets` map contains the absolute line offset for each
+    /// function within the module's virtual source code.
+    ///
+    /// The default implementation does nothing.
+    #[cfg(feature = "profiler")]
+    fn adjust_profile_address_maps(
+        &self,
+        _funcs: &mut [(String, FuncKey, Box<dyn Any + Send + Sync>)],
+        _line_offsets: &std::collections::HashMap<FuncKey, u32>,
+    ) {
+    }
 
     /// Creates a new `Object` file which is used to build the results of a
     /// compilation into.

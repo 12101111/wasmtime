@@ -164,6 +164,8 @@ impl wasmtime_environ::Compiler for Compiler {
             code: box_dyn_any_compiled_function(func),
             // TODO: Winch doesn't support GC objects and stack maps and all that yet.
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 

@@ -383,7 +383,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
     /// Get the `*mut VMStoreContext` value for our `VMContext`.
     fn get_vmstore_context_ptr(&mut self, builder: &mut FunctionBuilder) -> ir::Value {
         let global = self.get_vmstore_context_ptr_global(&mut builder.func);
-        builder.ins().global_value(self.pointer_type(), global)
+        self.build_global_value(builder, self.pointer_type(), global)
     }
 
     fn fuel_function_entry(&mut self, builder: &mut FunctionBuilder<'_>) {
@@ -1057,7 +1057,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         let mem_flags = ir::MemFlags::trusted().with_readonly().with_can_move();
 
         // Load the base pointer of the array of `VMSharedTypeIndex`es.
-        let shared_indices = pos.ins().load(
+        let shared_indices = self.build_load(
+            pos,
             pointer_type,
             mem_flags,
             vmctx,
@@ -1070,7 +1071,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
         // Load the`VMSharedTypeIndex` that this `ModuleInternedTypeIndex` is
         // associated with at runtime from the array.
-        pos.ins().load(ty, mem_flags, shared_indices, offset)
+        self.build_load(pos, ty, mem_flags, shared_indices, offset)
     }
 
     /// Load the associated `VMSharedTypeIndex` from inside a `*const VMFuncRef`.
@@ -1084,7 +1085,8 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         funcref: ir::Value,
     ) -> ir::Value {
         let ty = self.vmshared_type_index_ty();
-        pos.ins().load(
+        self.build_load(
+            pos,
             ty,
             mem_flags,
             funcref,
@@ -1333,7 +1335,7 @@ impl TranslateTrap for FuncEnvironment<'_> {
     fn vmctx_val(&mut self, pos: &mut FuncCursor<'_>) -> ir::Value {
         let pointer_type = self.pointer_type();
         let vmctx = self.vmctx(&mut pos.func);
-        pos.ins().global_value(pointer_type, vmctx)
+        self.build_global_value(pos, pointer_type, vmctx)
     }
 
     fn builtin_funcref(
@@ -1874,7 +1876,9 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
         // so that we don't have to patch the code at runtime.
         let pointer_type = self.env.pointer_type();
         let vmctx = self.env.vmctx(self.builder.func);
-        let base = self.builder.ins().global_value(pointer_type, vmctx);
+        let base = self
+            .env
+            .build_global_value(self.builder, pointer_type, vmctx);
 
         let mem_flags = ir::MemFlags::trusted().with_readonly().with_can_move();
 
@@ -1889,12 +1893,9 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
         // First append the callee vmctx address.
         let vmctx_offset =
             i32::try_from(self.env.offsets.vmctx_vmfunction_import_vmctx(callee_index)).unwrap();
-        append_profile_inst!(self.env, self.builder, Load);
-        let callee_vmctx = self
-            .builder
-            .ins()
-            .load(pointer_type, mem_flags, base, vmctx_offset);
-        append_profile_default_inst!(self.env, self.builder);
+        let callee_vmctx =
+            self.env
+                .build_load(self.builder, pointer_type, mem_flags, base, vmctx_offset);
         real_call_args.push(callee_vmctx);
         real_call_args.push(caller_vmctx);
 
@@ -1933,12 +1934,9 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             // and with different functions. Either way, we have to do the
             // indirect call.
             None => {
-                append_profile_inst!(self.env, self.builder, Load);
-                let func_addr = self
-                    .builder
-                    .ins()
-                    .load(pointer_type, mem_flags, base, body_offset);
-                append_profile_default_inst!(self.env, self.builder);
+                let func_addr =
+                    self.env
+                        .build_load(self.builder, pointer_type, mem_flags, base, body_offset);
                 Ok(self.indirect_call_inst(sig_ref, func_addr, &real_call_args))
             }
         }
@@ -2128,11 +2126,9 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
         // Load the caller's `VMSharedTypeIndex.
         let interned_ty = self.env.module.types[ty_index].unwrap_module_type_index();
 
-        append_profile_inst!(self.env, self.builder, Load);
         let caller_sig_id = self
             .env
             .module_interned_to_shared_ty(&mut self.builder.cursor(), interned_ty);
-        append_profile_default_inst!(self.env, self.builder);
 
         // Load the callee's `VMSharedTypeIndex`.
         //
@@ -2640,7 +2636,6 @@ impl FuncEnvironment<'_> {
         };
 
         args.push(len);
-        // TODO: ignore profile since table.fill is not used in lime1
         builder.ins().call(libcall, &args);
 
         Ok(())
@@ -3064,7 +3059,7 @@ impl FuncEnvironment<'_> {
                 }
             },
             GlobalVariable::Memory { gv, offset, ty } => {
-                let addr = builder.ins().global_value(self.pointer_type(), gv);
+                let addr = self.build_global_value(builder, self.pointer_type(), gv);
                 let mut flags = ir::MemFlags::trusted();
                 // Store vector globals in little-endian format to avoid
                 // byte swaps on big-endian platforms since at-rest vectors
@@ -3088,7 +3083,7 @@ impl FuncEnvironment<'_> {
                 };
 
                 let (gv, offset) = self.get_global_location(builder.func, global_index);
-                let gv = builder.ins().global_value(self.pointer_type(), gv);
+                let gv = self.build_global_value(builder, self.pointer_type(), gv);
                 let src = builder.ins().iadd_imm(gv, i64::from(offset));
 
                 gc::gc_compiler(self)?.translate_read_gc_reference(
@@ -3117,7 +3112,7 @@ impl FuncEnvironment<'_> {
                 unreachable!("validation checks that Wasm cannot `global.set` constant globals")
             }
             GlobalVariable::Memory { gv, offset, ty } => {
-                let addr = builder.ins().global_value(self.pointer_type(), gv);
+                let addr = self.build_global_value(builder, self.pointer_type(), gv);
                 let mut flags = ir::MemFlags::trusted();
                 // Like `global.get`, store globals in little-endian format.
                 if ty.is_vector() {
@@ -3140,7 +3135,7 @@ impl FuncEnvironment<'_> {
                 };
 
                 let (gv, offset) = self.get_global_location(builder.func, global_index);
-                let gv = builder.ins().global_value(self.pointer_type(), gv);
+                let gv = self.build_global_value(builder, self.pointer_type(), gv);
                 let src = builder.ins().iadd_imm(gv, i64::from(offset));
 
                 gc::gc_compiler(self)?.translate_write_gc_reference(
@@ -3334,17 +3329,11 @@ impl FuncEnvironment<'_> {
 
         let index_type = self.memory(index).idx_type;
         let val = self.cast_index_to_i64(&mut pos, val, index_type);
-        #[cfg(feature = "profiler")]
-        if let Some(profile) = &mut self.profile {
-            use cranelift_codegen::cursor::Cursor;
-
-            let loc = std::panic::Location::caller();
-            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
-            pos.set_srcloc(profile.srcloc_for_column(column));
-        }
-        let call_inst = pos
-            .ins()
-            .call(memory_grow, &[memory_vmctx, val, defined_memory_index]);
+        let call_inst = self.build_call(
+            &mut pos,
+            memory_grow,
+            &[memory_vmctx, val, defined_memory_index],
+        );
         let result = *pos.func.dfg.inst_results(call_inst).first().unwrap();
         let single_byte_pages = match self.memory(index).page_size_log2 {
             16 => false,
@@ -3367,7 +3356,7 @@ impl FuncEnvironment<'_> {
         let pointer_type = self.pointer_type();
         let vmctx = self.vmctx(&mut pos.func);
         let is_shared = self.module.memories[index].shared;
-        let base = pos.ins().global_value(pointer_type, vmctx);
+        let base = self.build_global_value(&mut pos, pointer_type, vmctx);
         let current_length_in_bytes = match self.module.defined_memory_index(index) {
             Some(def_index) => {
                 if is_shared {
@@ -3399,16 +3388,13 @@ impl FuncEnvironment<'_> {
                             .vmctx_vmmemory_definition_current_length(owned_index),
                     )
                     .unwrap();
-                    #[cfg(feature = "profiler")]
-                    if let Some(profile) = &mut self.profile {
-                        use cranelift_codegen::cursor::Cursor;
-
-                        let loc = std::panic::Location::caller();
-                        let column = profile.append_inst(wa2x_testabi::InstKind::Load, loc);
-                        pos.set_srcloc(profile.srcloc_for_column(column));
-                    }
-                    pos.ins()
-                        .load(pointer_type, ir::MemFlags::trusted(), base, offset)
+                    self.build_load(
+                        &mut pos,
+                        pointer_type,
+                        ir::MemFlags::trusted(),
+                        base,
+                        offset,
+                    )
                 }
             }
             None => {
@@ -3427,15 +3413,8 @@ impl FuncEnvironment<'_> {
                         vmmemory_definition_ptr,
                     )
                 } else {
-                    #[cfg(feature = "profiler")]
-                    if let Some(profile) = &mut self.profile {
-                        use cranelift_codegen::cursor::Cursor;
-
-                        let loc = std::panic::Location::caller();
-                        let column = profile.append_inst(wa2x_testabi::InstKind::Load, loc);
-                        pos.set_srcloc(profile.srcloc_for_column(column));
-                    }
-                    pos.ins().load(
+                    self.build_load(
+                        &mut pos,
                         pointer_type,
                         ir::MemFlags::trusted(),
                         vmmemory_ptr,
@@ -3489,17 +3468,11 @@ impl FuncEnvironment<'_> {
         };
         let src_index = pos.ins().iconst(I32, i64::from(src_index.as_u32()));
         let dst_index = pos.ins().iconst(I32, i64::from(dst_index.as_u32()));
-        #[cfg(feature = "profiler")]
-        if let Some(profile) = &mut self.profile {
-            use cranelift_codegen::cursor::Cursor;
-
-            let loc = std::panic::Location::caller();
-            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
-            pos.set_srcloc(profile.srcloc_for_column(column));
-        }
-        pos.ins()
-            .call(memory_copy, &[vmctx, dst_index, dst, src_index, src, len]);
-
+        self.build_call(
+            &mut pos,
+            memory_copy,
+            &[vmctx, dst_index, dst, src_index, src, len],
+        );
         Ok(())
     }
 
@@ -3518,15 +3491,8 @@ impl FuncEnvironment<'_> {
         let (memory_vmctx, defined_memory_index) =
             self.memory_vmctx_and_defined_index(&mut pos, memory_index);
 
-        #[cfg(feature = "profiler")]
-        if let Some(profile) = &mut self.profile {
-            use cranelift_codegen::cursor::Cursor;
-
-            let loc = std::panic::Location::caller();
-            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
-            pos.set_srcloc(profile.srcloc_for_column(column));
-        }
-        pos.ins().call(
+        self.build_call(
+            &mut pos,
             memory_fill,
             &[memory_vmctx, defined_memory_index, dst, val, len],
         );
@@ -3553,15 +3519,8 @@ impl FuncEnvironment<'_> {
 
         let dst = self.cast_index_to_i64(&mut pos, dst, self.memory(memory_index).idx_type);
 
-        #[cfg(feature = "profiler")]
-        if let Some(profile) = &mut self.profile {
-            use cranelift_codegen::cursor::Cursor;
-
-            let loc = std::panic::Location::caller();
-            let column = profile.append_inst(wa2x_testabi::InstKind::Call, loc);
-            pos.set_srcloc(profile.srcloc_for_column(column));
-        }
-        pos.ins().call(
+        self.build_call(
+            &mut pos,
             memory_init,
             &[vmctx, memory_index_arg, seg_index_arg, dst, src, len],
         );
@@ -3796,7 +3755,7 @@ impl FuncEnvironment<'_> {
         // If an explicit stack limit is requested, emit one here at the start
         // of the function.
         if let Some(gv) = self.stack_limit_at_function_entry {
-            let limit = builder.ins().global_value(self.pointer_type(), gv);
+            let limit = self.build_global_value(builder, self.pointer_type(), gv);
             let sp = builder.ins().get_stack_pointer(self.pointer_type());
             let overflow = builder.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
             self.conditionally_trap(builder, overflow, ir::TrapCode::STACK_OVERFLOW);
@@ -3851,9 +3810,9 @@ impl FuncEnvironment<'_> {
     /// Set the builder's srcloc for the given inst kind.
     #[cfg(feature = "profiler")]
     #[track_caller]
-    pub fn append_profile_inst(
+    pub fn append_profile_inst<B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         kind: wa2x_testabi::InstKind,
     ) {
         if let Some(profile) = &mut self.profile {
@@ -3865,7 +3824,7 @@ impl FuncEnvironment<'_> {
 
     /// Reset the builder's srcloc to column 0.
     #[cfg(feature = "profiler")]
-    pub fn append_profile_default_inst(&mut self, builder: &mut FunctionBuilder) {
+    pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&mut self, builder: &mut B) {
         if let Some(ref profile) = self.profile {
             builder.set_srcloc(profile.reset_column());
         }
@@ -3873,9 +3832,13 @@ impl FuncEnvironment<'_> {
 
     // === Profiled builder wrappers for memory instructions ===
     #[track_caller]
-    pub fn build_load<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+    pub fn build_load<
+        B: crate::ProfileBuilder,
+        T1: Into<ir::MemFlags>,
+        T2: Into<ir::immediates::Offset32>,
+    >(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         ty: ir::Type,
         flags: T1,
         addr: ir::Value,
@@ -3888,9 +3851,13 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_store<T1: Into<ir::MemFlags>, T2: Into<ir::immediates::Offset32>>(
+    pub fn build_store<
+        B: crate::ProfileBuilder,
+        T1: Into<ir::MemFlags>,
+        T2: Into<ir::immediates::Offset32>,
+    >(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         flags: T1,
         value: ir::Value,
         addr: ir::Value,
@@ -3903,9 +3870,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_stack_store<T1: Into<ir::immediates::Offset32>>(
+    pub fn build_stack_store<B: crate::ProfileBuilder, T1: Into<ir::immediates::Offset32>>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         value: ir::Value,
         slot: ir::StackSlot,
         offset: T1,
@@ -3916,12 +3883,25 @@ impl FuncEnvironment<'_> {
         result
     }
 
+    #[track_caller]
+    pub fn build_global_value<B: crate::ProfileBuilder>(
+        &mut self,
+        builder: &mut B,
+        mem: ir::Type,
+        gv: ir::GlobalValue,
+    ) -> ir::Value {
+        append_profile_inst!(self, builder, Load);
+        let result = builder.ins().global_value(mem, gv);
+        append_profile_default_inst!(self, builder);
+        result
+    }
+
     // === Profiled builder wrappers for control-flow instructions ===
 
     #[track_caller]
-    pub fn build_jump<'a>(
+    pub fn build_jump<'a, B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         block: ir::Block,
         args: impl IntoIterator<Item = &'a ir::BlockArg>,
     ) -> ir::Inst {
@@ -3932,9 +3912,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_brif<'a>(
+    pub fn build_brif<'a, B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         cond: ir::Value,
         block_then: ir::Block,
         args_then: impl IntoIterator<Item = &'a ir::BlockArg>,
@@ -3950,9 +3930,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_br_table(
+    pub fn build_br_table<B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         val: ir::Value,
         jt: ir::JumpTable,
     ) -> ir::Inst {
@@ -3963,9 +3943,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_call(
+    pub fn build_call<B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         callee: ir::FuncRef,
         args: &[ir::Value],
     ) -> ir::Inst {
@@ -3976,9 +3956,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_call_indirect(
+    pub fn build_call_indirect<B: crate::ProfileBuilder>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         sig: ir::SigRef,
         callee: ir::Value,
         args: &[ir::Value],
@@ -3990,7 +3970,11 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_return(&mut self, builder: &mut FunctionBuilder, vals: &[ir::Value]) -> ir::Inst {
+    pub fn build_return<B: crate::ProfileBuilder>(
+        &mut self,
+        builder: &mut B,
+        vals: &[ir::Value],
+    ) -> ir::Inst {
         append_profile_inst!(self, builder, Return);
         let result = builder.ins().return_(vals);
         append_profile_default_inst!(self, builder);
@@ -3998,21 +3982,21 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_trap<T: Into<ir::TrapCode>>(
+    pub fn build_trap<B: crate::ProfileBuilder, T: Into<ir::TrapCode>>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         code: T,
     ) -> ir::Inst {
-        append_profile_inst!(self, builder, Call);
+        append_profile_inst!(self, builder, Trap);
         let result = builder.ins().trap(code);
         append_profile_default_inst!(self, builder);
         result
     }
 
     #[track_caller]
-    pub fn build_trapz<T: Into<ir::TrapCode>>(
+    pub fn build_trapz<B: crate::ProfileBuilder, T: Into<ir::TrapCode>>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         cond: ir::Value,
         code: T,
     ) -> ir::Inst {
@@ -4023,9 +4007,9 @@ impl FuncEnvironment<'_> {
     }
 
     #[track_caller]
-    pub fn build_trapnz<T: Into<ir::TrapCode>>(
+    pub fn build_trapnz<B: crate::ProfileBuilder, T: Into<ir::TrapCode>>(
         &mut self,
-        builder: &mut FunctionBuilder,
+        builder: &mut B,
         cond: ir::Value,
         code: T,
     ) -> ir::Inst {

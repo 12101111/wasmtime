@@ -1653,6 +1653,8 @@ impl ComponentCompiler for Compiler {
         Ok(CompiledFunctionBody {
             code: super::box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 
@@ -1760,6 +1762,8 @@ impl ComponentCompiler for Compiler {
         Ok(CompiledFunctionBody {
             code: super::box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 }

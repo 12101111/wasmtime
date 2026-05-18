@@ -20,7 +20,6 @@ pub fn encode_srcloc(line: u32, column: u32) -> SourceLoc {
 }
 
 /// Decode a `SourceLoc` into a (line, column) pair.
-#[allow(dead_code)]
 pub fn decode_srcloc(loc: SourceLoc) -> (u32, u32) {
     let bits = loc.bits();
     let line = bits >> 8;
@@ -30,7 +29,6 @@ pub fn decode_srcloc(loc: SourceLoc) -> (u32, u32) {
 
 /// Per-function profiler state maintained during function translation.
 pub struct ProfileState {
-    line_offset: u32,
     info: FuncProfileInfo,
 }
 
@@ -38,7 +36,6 @@ impl ProfileState {
     /// Create a new profiler state for the given function name.
     pub fn new(func_name: String) -> Self {
         Self {
-            line_offset: 0,
             info: FuncProfileInfo {
                 func_name,
                 ops: vec![OpProfileInfo {
@@ -84,5 +81,10 @@ impl ProfileState {
     /// Get the encoded srcloc for the given column.
     pub(super) fn srcloc_for_column(&self, column: u32) -> SourceLoc {
         encode_srcloc(self.current_line(), column)
+    }
+
+    /// Consume this state and return the collected function profile info.
+    pub fn into_info(self) -> FuncProfileInfo {
+        self.info
     }
 }

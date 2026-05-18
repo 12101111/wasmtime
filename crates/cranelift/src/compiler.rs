@@ -343,9 +343,14 @@ impl wasmtime_environ::Compiler for Compiler {
         log::debug!("`{symbol}` translated to CLIF in {:?}", timing.total());
         log::trace!("`{symbol}` timing info\n{timing}");
 
+        #[cfg(feature = "profiler")]
+        let profile = func_env.profile.take().map(|state| state.into_info());
+
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap,
+            #[cfg(feature = "profiler")]
+            profile,
         })
     }
 
@@ -472,6 +477,8 @@ impl wasmtime_environ::Compiler for Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 
@@ -828,6 +835,8 @@ impl wasmtime_environ::Compiler for Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 
@@ -839,6 +848,21 @@ impl wasmtime_environ::Compiler for Compiler {
         debug_assert!(func.is::<CompiledFunction>());
         let func = func.downcast_ref::<CompiledFunction>().unwrap();
         Box::new(func.relocations().map(|r| r.reloc_target))
+    }
+
+    #[cfg(feature = "profiler")]
+    fn adjust_profile_address_maps(
+        &self,
+        funcs: &mut [(String, FuncKey, Box<dyn std::any::Any + Send + Sync>)],
+        line_offsets: &std::collections::HashMap<FuncKey, u32>,
+    ) {
+        for (_, key, code) in funcs {
+            if let Some(&line_offset) = line_offsets.get(key) {
+                if let Some(func) = code.downcast_mut::<CompiledFunction>() {
+                    func.adjust_profile_address_map(line_offset);
+                }
+            }
+        }
     }
 }
 
@@ -1439,6 +1463,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 }
@@ -1524,7 +1550,7 @@ impl FunctionCompiler<'_> {
             compiled_function.set_address_map(
                 offset.try_into().unwrap(),
                 len.try_into().unwrap(),
-                tunables.generate_address_map,
+                tunables.generate_address_map || tunables.enable_profile,
             );
         }
 

@@ -179,6 +179,11 @@ impl<'a> Compilation<'a> {
     pub fn symbol_id(&self, sym: usize) -> SymbolId {
         self.symbol_index_to_id[sym]
     }
+
+    /// Returns the tunables used for this compilation.
+    pub fn tunables(&self) -> &Tunables {
+        self.tunables
+    }
 }
 
 impl<'a> fmt::Debug for Compilation<'a> {

@@ -47,6 +47,7 @@ serde_json = { workspace = true, optional = true }
 postcard = { workspace = true }
 once_cell = { version = "1.12.0", optional = true }
 rayon = { workspace = true, optional = true }
+wa2x-testabi = { workspace = true, optional = true }
 object = { workspace = true, features = ['unaligned'] }
 async-trait = { workspace = true, optional = true }
 encoding_rs = { version = "0.8.31", optional = true }
@@ -153,6 +154,7 @@ default = [
   'std',
   'debug',
   'compile-time-builtins',
+  'profiler',
 ]
 
 # Enables conversion helpers between `anyhow::Error` and `wasmtime::Error`.
@@ -171,6 +173,14 @@ cranelift = ["dep:wasmtime-cranelift", "std", "wasmtime-unwinder/cranelift"]
 # strategy in `Config` will be available. It is currently in active development
 # and shouldn't be used in production applications.
 winch = ["dep:wasmtime-winch", "std"]
+
+# Enables virtual source code profiling support.
+profiler = [
+  "dep:wa2x-testabi",
+  "wasmtime-environ/profiler",
+  "wasmtime-cranelift?/profiler",
+  "wasmtime-winch?/profiler",
+]
 
 # Enables support for Pulley, the WebAssembly interpreter. When paired with the
 # `cranelift` feature, the compiler backends for the `pulley32` and `pulley64`

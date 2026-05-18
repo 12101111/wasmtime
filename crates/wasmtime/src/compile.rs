@@ -93,8 +93,22 @@ pub(crate) fn build_module_artifacts<T: FinishedObject>(
         needs_gc_heap,
         compiled_funcs,
         indices,
+        #[cfg(feature = "profiler")]
+        profiles,
+        #[cfg(feature = "profiler")]
+        func_line_offsets,
     } = unlinked_compile_outputs.pre_link();
     translation.module.needs_gc_heap |= needs_gc_heap;
+
+    #[cfg(feature = "profiler")]
+    let compiled_funcs = {
+        let mut compiled_funcs = compiled_funcs;
+        compiler.adjust_profile_address_maps(&mut compiled_funcs, &func_line_offsets);
+        if let Some(profile) = profiles.get(&translation.module_index()) {
+            translation.profile = Some(profile.clone());
+        }
+        compiled_funcs
+    };
 
     // Emplace all compiled functions into the object file with any other
     // sections associated with code as well.
@@ -180,10 +194,26 @@ pub(crate) fn build_component_artifacts<T: FinishedObject>(
         needs_gc_heap,
         compiled_funcs,
         indices,
+        #[cfg(feature = "profiler")]
+        profiles,
+        #[cfg(feature = "profiler")]
+        func_line_offsets,
     } = unlinked_compile_outputs.pre_link();
     for (_, t) in &mut module_translations {
         t.module.needs_gc_heap |= needs_gc_heap
     }
+
+    #[cfg(feature = "profiler")]
+    let compiled_funcs = {
+        let mut compiled_funcs = compiled_funcs;
+        compiler.adjust_profile_address_maps(&mut compiled_funcs, &func_line_offsets);
+        for (module, profile) in profiles {
+            if let Some(t) = module_translations.get_mut(module) {
+                t.profile = Some(profile);
+            }
+        }
+        compiled_funcs
+    };
 
     // Collect bytecode slices here before moving `module_translations` below.
     let module_wasms = if tunables.debug_guest {
@@ -1010,10 +1040,33 @@ impl UnlinkedCompileOutputs<'_> {
         let mut indices = FunctionIndices::default();
         let mut needs_gc_heap = false;
 
+        #[cfg(feature = "profiler")]
+        let mut profiles = std::collections::HashMap::new();
+        #[cfg(feature = "profiler")]
+        let mut func_line_offsets = std::collections::HashMap::new();
+
         // NB: Iteration over this `BTreeMap` ensures that we uphold
         // `compiled_func`'s sorted property.
         for output in self.outputs.into_values() {
             needs_gc_heap |= output.function.needs_gc_heap;
+
+            #[cfg(feature = "profiler")]
+            if let Some(func_profile) = output.function.profile {
+                if let Some(translation) = output.translation {
+                    let module = translation.module_index();
+                    let profile = profiles.entry(module).or_insert_with(|| {
+                        wa2x_testabi::ProfileInfo::new(format!("{module:?}"))
+                    });
+                    let line_offset = profile.append_func(func_profile.func_name);
+                    func_line_offsets.insert(output.key, line_offset);
+                    for op in func_profile.ops {
+                        profile.append_opkind(op.op);
+                        for inst in op.insts {
+                            profile.append_inst_raw(inst.kind, inst.file, inst.loc);
+                        }
+                    }
+                }
+            }
 
             let index = compiled_funcs.len();
             compiled_funcs.push((output.symbol, output.key, output.function.code));
@@ -1031,6 +1084,10 @@ impl UnlinkedCompileOutputs<'_> {
             needs_gc_heap,
             compiled_funcs,
             indices,
+            #[cfg(feature = "profiler")]
+            profiles,
+            #[cfg(feature = "profiler")]
+            func_line_offsets,
         }
     }
 }
@@ -1046,6 +1103,13 @@ struct PreLinkOutput {
     /// The `FunctionIndices` mapping our function keys to indices in that flat
     /// list.
     indices: FunctionIndices,
+    /// Module-level profile info collected from all compiled functions,
+    /// keyed by module index.
+    #[cfg(feature = "profiler")]
+    profiles: std::collections::HashMap<StaticModuleIndex, wa2x_testabi::ProfileInfo>,
+    /// Line offsets for each function within the module's virtual source code.
+    #[cfg(feature = "profiler")]
+    func_line_offsets: std::collections::HashMap<FuncKey, u32>,
 }
 
 #[derive(Default)]
@@ -1086,7 +1150,7 @@ impl FunctionIndices {
         )?;
 
         // If requested, generate and add DWARF information.
-        if tunables.debug_native {
+        if tunables.debug_native || tunables.enable_profile {
             compiler.append_dwarf(
                 &mut obj,
                 &translations,
