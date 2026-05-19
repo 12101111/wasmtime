@@ -67,10 +67,25 @@ impl FuncTranslator {
         debug_assert_eq!(func.dfg.num_insts(), 0, "Function must be empty");
 
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
-        let skip_srcloc = cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
+        let skip_srcloc =
+            cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
         if !skip_srcloc {
             builder.set_srcloc(cur_srcloc(&reader));
         }
+        // Initialize profile state for this function, if profiling is enabled.
+        #[cfg(feature = "profiler")]
+        {
+            use crate::profile::ProfileState;
+
+            let func_name = format!("{}", builder.func.name);
+            let profile = ProfileState::new(func_name);
+            builder
+                .func
+                .params
+                .ensure_base_srcloc(profile.current_srcloc());
+            environ.profile = Some(profile)
+        }
+
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -93,15 +108,6 @@ impl FuncTranslator {
             .initialize(&builder.func.signature, exit_block);
 
         parse_local_decls(&mut reader, &mut builder, num_params, environ, validator)?;
-
-        // Initialize profile state for this function, if profiling is enabled.
-        #[cfg(feature = "profiler")]
-        {
-            use crate::profile::ProfileState;
-
-            let func_name = format!("{}", builder.func.name);
-            environ.profile = Some(ProfileState::new(func_name))
-        }
 
         parse_function_body(validator, reader, &mut builder, environ)?;
 
@@ -162,7 +168,8 @@ fn parse_local_decls(
     let mut next_local = num_params;
     let local_count = reader.read_var_u32()?;
 
-    let skip_srcloc = cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
+    let skip_srcloc =
+        cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
     for _ in 0..local_count {
         if !skip_srcloc {
             builder.set_srcloc(cur_srcloc(reader));
@@ -268,15 +275,16 @@ fn parse_function_body(
     let mut reader = OperatorsReader::new(reader);
     let mut operand_types = vec![];
 
-    let skip_srcloc = cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
+    let skip_srcloc =
+        cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
     while !reader.eof() {
         let pos = reader.original_position();
-        if skip_srcloc {
+        if !skip_srcloc {
             builder.set_srcloc(cur_srcloc(&reader.get_binary_reader()));
         }
 
         let op = reader.read()?;
-        if skip_srcloc {
+        if !skip_srcloc {
             environ.next_srcloc = cur_srcloc(&reader.get_binary_reader());
         }
         let operand_types =

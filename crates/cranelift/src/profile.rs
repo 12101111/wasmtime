@@ -5,8 +5,9 @@
 //! and machine code, using DWARF debug information.
 
 use cranelift_codegen::ir::SourceLoc;
-use std::panic::Location;
 use wa2x_testabi::{FuncProfileInfo, InstInfo, InstKind, OpProfileInfo, OperatorKind};
+
+use crate::ProfileBuilder;
 
 /// Encode a (line, column) pair into a `SourceLoc`.
 ///
@@ -33,13 +34,18 @@ pub struct ProfileState {
 }
 
 impl ProfileState {
-    /// Create a new profiler state for the given function name.
+    /// Create a new profiler state for the given function name with EntryBlock as entry_op.
     pub fn new(func_name: String) -> Self {
+        Self::new_with_op(func_name, OperatorKind::EntryBlock)
+    }
+
+    /// Create a new profiler state for the given function name with entry_op.
+    pub fn new_with_op(func_name: String, entry_op: OperatorKind) -> Self {
         Self {
             info: FuncProfileInfo {
                 func_name,
                 ops: vec![OpProfileInfo {
-                    op: OperatorKind::EntryBlock,
+                    op: entry_op,
                     insts: vec![],
                 }],
             },
@@ -51,36 +57,33 @@ impl ProfileState {
         self.info.ops.push(OpProfileInfo { op, insts: vec![] });
     }
 
-    /// Append an instruction to the current operator and return the column.
-    pub fn append_inst(&mut self, kind: InstKind, loc: &Location) -> u32 {
+    /// Append an instruction to the current operator and set the builder's srcloc to the current loc.
+    #[track_caller]
+    pub fn append_profile_inst<B: ProfileBuilder>(&mut self, builder: &mut B, kind: InstKind) {
+        let loc = std::panic::Location::caller();
         let file = loc.file();
         let file = if file.contains("") { 0 } else { 255 }; // FIXME: map file name
-        self.append_inst_raw(kind, file, loc.line() as u16)
-    }
-
-    /// Append a raw instruction to the current operator and return the column.
-    fn append_inst_raw(&mut self, kind: InstKind, file: u8, loc: u16) -> u32 {
+        let loc = loc.line().try_into().unwrap();
         let info = InstInfo { kind, file, loc };
         let insts = &mut self.info.ops.last_mut().expect("no op").insts;
         insts.push(info);
-        let column = insts.len();
-        assert!(column < 2usize.pow(32));
-        column as u32
+        let column = insts.len().try_into().unwrap();
+        builder.set_srcloc(encode_srcloc(self.current_line(), column));
     }
 
-    /// Reset the current column to 0 and return the corresponding srcloc.
-    pub(super) fn reset_column(&self) -> SourceLoc {
-        encode_srcloc(self.current_line(), 0)
+    /// Reset the builder's srcloc to column 0.
+    #[cfg(feature = "profiler")]
+    pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&self, builder: &mut B) {
+        builder.set_srcloc(encode_srcloc(self.current_line(), 0));
     }
 
     /// Get the current line number.
     fn current_line(&self) -> u32 {
-        self.info.ops.len() as _
+        self.info.ops.len().try_into().unwrap()
     }
 
-    /// Get the encoded srcloc for the given column.
-    pub(super) fn srcloc_for_column(&self, column: u32) -> SourceLoc {
-        encode_srcloc(self.current_line(), column)
+    pub(crate) fn current_srcloc(&self) -> SourceLoc {
+        encode_srcloc(self.current_line(), 0)
     }
 
     /// Consume this state and return the collected function profile info.

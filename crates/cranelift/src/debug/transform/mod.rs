@@ -284,7 +284,13 @@ fn generate_profile_dwarf(
 
         // Build line program sequences for all compiled functions.
         for func in translation.module.defined_func_indices() {
+            use wasmtime_environ::FuncKey;
+
             let (sym, meta) = compilation.function(module, func);
+            let line_offset = *translation
+                .line_offsets
+                .get(&FuncKey::DefinedWasmFunction(module, func))
+                .expect("expect line_offset") as u64;
             let address_map = &meta.address_map;
 
             if address_map.instructions.is_empty() {
@@ -299,7 +305,7 @@ fn generate_profile_dwarf(
             // Emit a row for offset zero - debuggers expect this.
             out_program.row().address_offset = 0;
             out_program.row().file = file_index;
-            out_program.row().line = 0;
+            out_program.row().line = line_offset;
             out_program.row().column = 0;
             out_program.row().is_statement = true;
             out_program.row().prologue_end = true;
@@ -309,21 +315,20 @@ fn generate_profile_dwarf(
             let mut last_column = 0;
 
             for instr in address_map.instructions.iter() {
-                let (line, column) = match instr.srcloc.file_offset() {
-                    Some(bits) => decode_srcloc(SourceLoc::new(bits)),
-                    None => (last_line, last_column),
+                if let Some(bits) = instr.srcloc.file_offset() {
+                    let (line, column) = decode_srcloc(SourceLoc::new(bits));
+                    last_line = line as u64 + line_offset;
+                    last_column = column as u64;
                 };
-                log::warn!("{} {}:{}", instr.code_offset, line, column);
-                last_line = line;
-                last_column = column;
 
                 out_program.row().address_offset = instr.code_offset as u64;
                 out_program.row().file = file_index;
-                out_program.row().line = line.into();
-                out_program.row().column = column.into();
+                out_program.row().line = last_line;
+                out_program.row().column = last_column;
                 out_program.row().is_statement = true;
                 out_program.row().prologue_end = false;
                 out_program.generate_row();
+                log::debug!("map {} to {}:{}", instr.code_offset, last_line, last_column);
             }
 
             out_program.end_sequence(address_map.body_len as u64);

@@ -2503,7 +2503,6 @@ impl FuncEnvironment<'_> {
             }
         };
 
-        // TODO: ignore profile since table.grow is not used in lime1
         let call_inst = pos.ins().call(grow, &args);
         let result = builder.func.dfg.first_result(call_inst);
 
@@ -3259,15 +3258,16 @@ impl FuncEnvironment<'_> {
             // the import definition itself.
             None => {
                 let vmimport = self.offsets.vmctx_vmmemory_import(index);
-                // TODO: ignore imported memory for profiler
-                let vmctx = pos.ins().load(
+                let vmctx = self.build_load(
+                    pos,
                     self.isa.pointer_type(),
                     ir::MemFlags::trusted(),
                     cur_vmctx,
                     i32::try_from(vmimport + u32::from(self.offsets.vmmemory_import_vmctx()))
                         .unwrap(),
                 );
-                let index = pos.ins().load(
+                let index = self.build_load(
+                    pos,
                     ir::types::I32,
                     ir::MemFlags::trusted(),
                     cur_vmctx,
@@ -3296,14 +3296,16 @@ impl FuncEnvironment<'_> {
             None => {
                 let vmimport = self.offsets.vmctx_vmtable_import(index);
 
-                let vmctx = pos.ins().load(
+                let vmctx = self.build_load(
+                    pos,
                     self.isa.pointer_type(),
                     ir::MemFlags::trusted(),
                     cur_vmctx,
                     i32::try_from(vmimport + u32::from(self.offsets.vmtable_import_vmctx()))
                         .unwrap(),
                 );
-                let index = pos.ins().load(
+                let index = self.build_load(
+                    pos,
                     ir::types::I32,
                     ir::MemFlags::trusted(),
                     cur_vmctx,
@@ -3362,10 +3364,13 @@ impl FuncEnvironment<'_> {
                 if is_shared {
                     let offset =
                         i32::try_from(self.offsets.vmctx_vmmemory_pointer(def_index)).unwrap();
-                    // TODO: ignore shared memory for profiler
-                    let vmmemory_ptr =
-                        pos.ins()
-                            .load(pointer_type, ir::MemFlags::trusted(), base, offset);
+                    let vmmemory_ptr = self.build_load(
+                        &mut pos,
+                        pointer_type,
+                        ir::MemFlags::trusted(),
+                        base,
+                        offset,
+                    );
                     let vmmemory_definition_offset =
                         i64::from(self.offsets.ptr.vmmemory_definition_current_length());
                     let vmmemory_definition_ptr =
@@ -3399,9 +3404,13 @@ impl FuncEnvironment<'_> {
             }
             None => {
                 let offset = i32::try_from(self.offsets.vmctx_vmmemory_import_from(index)).unwrap();
-                let vmmemory_ptr =
-                    pos.ins()
-                        .load(pointer_type, ir::MemFlags::trusted(), base, offset);
+                let vmmemory_ptr = self.build_load(
+                    &mut pos,
+                    pointer_type,
+                    ir::MemFlags::trusted(),
+                    base,
+                    offset,
+                );
                 if is_shared {
                     let vmmemory_definition_offset =
                         i64::from(self.offsets.ptr.vmmemory_definition_current_length());
@@ -3543,7 +3552,7 @@ impl FuncEnvironment<'_> {
     ) -> WasmResult<ir::Value> {
         let table_data = self.get_or_create_table(pos.func, table_index);
         let index_type = index_type_to_ir_type(self.table(table_index).idx_type);
-        Ok(table_data.bound.bound(&*self.isa, pos, index_type))
+        Ok(table_data.bound.bound(self, pos, index_type))
     }
 
     pub fn translate_table_copy(
@@ -3713,6 +3722,7 @@ impl FuncEnvironment<'_> {
         #[cfg(feature = "profiler")]
         if self.tunables.enable_profile {
             self.append_profile_opkind(builder, wa2x_testabi::OperatorKind::from(op));
+            self.next_srcloc = self.profile.as_ref().unwrap().current_srcloc();
         }
 
         if self.tunables.consume_fuel {
@@ -3721,7 +3731,7 @@ impl FuncEnvironment<'_> {
         if self.is_reachable() && self.state_slot.is_some() {
             let builtin = self.builtin_functions.patchable_breakpoint(builder.func);
             let vmctx = self.vmctx_val(&mut builder.cursor());
-            let inst = builder.ins().call(builtin, &[vmctx]);
+            let inst = self.build_call(builder, builtin, &[vmctx]);
             let tags = self.debug_tags(builder.srcloc());
             builder.func.debug_tags.set(inst, tags);
         }
@@ -3803,7 +3813,7 @@ impl FuncEnvironment<'_> {
     ) {
         if let Some(profile) = &mut self.profile {
             profile.append_opkind(op);
-            builder.set_srcloc(profile.reset_column());
+            profile.append_profile_default_inst(builder);
         }
     }
 
@@ -3816,17 +3826,15 @@ impl FuncEnvironment<'_> {
         kind: wa2x_testabi::InstKind,
     ) {
         if let Some(profile) = &mut self.profile {
-            let loc = std::panic::Location::caller();
-            let column = profile.append_inst(kind, loc);
-            builder.set_srcloc(profile.srcloc_for_column(column));
+            profile.append_profile_inst(builder, kind);
         }
     }
 
     /// Reset the builder's srcloc to column 0.
     #[cfg(feature = "profiler")]
-    pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&mut self, builder: &mut B) {
-        if let Some(ref profile) = self.profile {
-            builder.set_srcloc(profile.reset_column());
+    pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&self, builder: &mut B) {
+        if let Some(profile) = &self.profile {
+            profile.append_profile_default_inst(builder);
         }
     }
 
@@ -4265,8 +4273,8 @@ impl FuncEnvironment<'_> {
 
         let vmctx = self.vmctx_val(&mut builder.cursor());
         let round = round_builtin(&mut self.builtin_functions, builder.func);
-        let round_one = |builder: &mut FunctionBuilder, value: ir::Value| {
-            let call = builder.ins().call(round, &[vmctx, value]);
+        let mut round_one = |builder: &mut FunctionBuilder, value: ir::Value| {
+            let call = self.build_call(builder, round, &[vmctx, value]);
             *builder.func.dfg.inst_results(call).first().unwrap()
         };
 

@@ -340,21 +340,6 @@ pub trait Compiler: Send + Sync {
         resolve_reloc: &dyn Fn(usize, FuncKey) -> usize,
     ) -> Result<Vec<(SymbolId, FunctionLoc)>>;
 
-    /// Adjust the source locations in compiled function address maps to use
-    /// module-level absolute line numbers for virtual source code mapping.
-    ///
-    /// The `line_offsets` map contains the absolute line offset for each
-    /// function within the module's virtual source code.
-    ///
-    /// The default implementation does nothing.
-    #[cfg(feature = "profiler")]
-    fn adjust_profile_address_maps(
-        &self,
-        _funcs: &mut [(String, FuncKey, Box<dyn Any + Send + Sync>)],
-        _line_offsets: &std::collections::HashMap<FuncKey, u32>,
-    ) {
-    }
-
     /// Creates a new `Object` file which is used to build the results of a
     /// compilation into.
     ///

@@ -4708,6 +4708,7 @@ dependencies = [
  "target-lexicon",
  "tempfile",
  "tokio",
+ "wa2x-testabi",
  "wasm-compose",
  "wasm-encoder 0.246.2",
  "wasm-wave",
