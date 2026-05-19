@@ -499,6 +499,7 @@ impl AddressTransform {
         wasm_file: wasmtime_environ::WasmFileInfo,
     ) -> Self {
         use cranelift_entity::EntityRef;
+        use wasmtime_environ::FuncKey;
 
         let mut translations = wasmtime_environ::PrimaryMap::new();
         let mut translation = wasmtime_environ::ModuleTranslation::new(StaticModuleIndex::new(0));
@@ -514,7 +515,12 @@ impl AddressTransform {
             object::Endianness::Little,
         );
         let dummy_symbol = dummy_obj.add_file_symbol(Vec::new());
-        let func_lookup = move |_, f| (dummy_symbol, module_map[f]);
+        let func_lookup = move |key: FuncKey| {
+            let FuncKey::DefinedWasmFunction(_, f) = key else {
+                return None;
+            };
+            Some((dummy_symbol, module_map[f]))
+        };
         let tunables = wasmtime_environ::Tunables::default_host();
         let compile = Compilation::new(
             &*cranelift_codegen::isa::lookup(target_lexicon::Triple::host())

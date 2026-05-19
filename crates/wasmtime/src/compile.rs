@@ -1122,11 +1122,11 @@ impl FunctionIndices {
             compiler.append_dwarf(
                 &mut obj,
                 &translations,
-                &|module, func| {
-                    let i = self.indices[&FuncKey::DefinedWasmFunction(module, func)];
-                    let (symbol, _) = symbol_ids_and_locs[i];
-                    let (_, _, compiled_func) = &compiled_funcs[i];
-                    (symbol, &**compiled_func)
+                &|key| {
+                    let i = self.indices.get(&key)?;
+                    let (symbol, _) = symbol_ids_and_locs[*i];
+                    let (_, _, compiled_func) = &compiled_funcs[*i];
+                    Some((symbol, &**compiled_func))
                 },
                 dwarf_package_bytes,
                 tunables,

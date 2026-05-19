@@ -4,8 +4,8 @@
 use crate::error::Result;
 use crate::prelude::*;
 use crate::{
-    DefinedFuncIndex, FlagValue, FuncKey, FunctionLoc, ObjectKind, PrimaryMap, StaticModuleIndex,
-    TripleExt, Tunables, WasmError, WasmFuncType, obj,
+    FlagValue, FuncKey, FunctionLoc, ObjectKind, PrimaryMap, StaticModuleIndex, TripleExt,
+    Tunables, WasmError, WasmFuncType, obj,
 };
 use object::write::{Object, SymbolId};
 use object::{Architecture, BinaryFormat, FileFlags};
@@ -444,10 +444,7 @@ pub trait Compiler: Send + Sync {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()>;

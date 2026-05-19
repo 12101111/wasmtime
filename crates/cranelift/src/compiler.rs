@@ -37,10 +37,10 @@ use wasmtime_environ::error::{Context as _, Result};
 use wasmtime_environ::obj::{ELF_WASMTIME_EXCEPTIONS, ELF_WASMTIME_FRAMES};
 use wasmtime_environ::{
     Abi, AddressMapSection, BuiltinFunctionIndex, CacheStore, CompileError, CompiledFunctionBody,
-    DefinedFuncIndex, FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder,
-    FrameTableBuilder, FuncKey, FunctionBodyData, FunctionLoc, HostCall, InliningCompiler,
-    ModulePC, ModuleTranslation, ModuleTypesBuilder, PtrSize, StackMapSection, StaticModuleIndex,
-    TrapEncodingBuilder, TrapSentinel, TripleExt, Tunables, WasmFuncType, WasmValType, prelude::*,
+    FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder, FrameTableBuilder, FuncKey,
+    FunctionBodyData, FunctionLoc, HostCall, InliningCompiler, ModulePC, ModuleTranslation,
+    ModuleTypesBuilder, PtrSize, StackMapSection, StaticModuleIndex, TrapEncodingBuilder,
+    TrapSentinel, TripleExt, Tunables, WasmFuncType, WasmValType, prelude::*,
 };
 use wasmtime_unwinder::ExceptionTableBuilder;
 
@@ -686,24 +686,21 @@ impl wasmtime_environ::Compiler for Compiler {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (SymbolId, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(SymbolId, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()> {
         log::trace!("appending DWARF debug info");
 
-        let get_func = move |m, f| {
-            let (sym, any) = get_func(m, f);
-            log::trace!("get_func({m:?}, {f:?}) -> ({sym:?}, {any:#p})");
+        let get_func = move |key: FuncKey| {
+            let (sym, any) = get_func(key)?;
+            log::trace!("get_func({key:?}) -> ({sym:?}, {any:#p})");
             debug_assert!(!any.is::<Option<CompilerContext>>());
             debug_assert!(any.is::<CompiledFunction>());
-            (
+            Some((
                 sym,
                 any.downcast_ref::<CompiledFunction>().unwrap().metadata(),
-            )
+            ))
         };
 
         let mut compilation = crate::debug::Compilation::new(
@@ -1598,6 +1595,8 @@ impl FunctionCompiler<'_> {
                 len.try_into().unwrap(),
                 tunables.generate_address_map || tunables.enable_profile,
             );
+        } else if self.compiler.tunables.enable_profile {
+            compiled_function.set_address_map(0, 0, true);
         }
 
         if isa.flags().unwind_info() {

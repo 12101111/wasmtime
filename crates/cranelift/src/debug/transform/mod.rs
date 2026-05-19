@@ -9,7 +9,8 @@ use std::collections::HashSet;
 use synthetic::ModuleSyntheticUnit;
 use wasmtime_environ::error::Error;
 use wasmtime_environ::{
-    DefinedFuncIndex, ModuleTranslation, PrimaryMap, StaticModuleIndex, Tunables, prelude::*,
+    DefinedFuncIndex, FuncKey, ModuleTranslation, PrimaryMap, StaticModuleIndex, Tunables,
+    prelude::*,
 };
 
 pub use address_transform::AddressTransform;
@@ -261,7 +262,7 @@ fn generate_profile_dwarf(
     let mut out_dwarf = write::Dwarf::default();
     let line_encoding = LineEncoding::default();
 
-    for (module, translation) in compilation.translations.iter() {
+    for (_module, translation) in compilation.translations.iter() {
         let id = out_dwarf.strings.add(b".");
 
         let out_comp_dir = write::LineString::StringRef(id);
@@ -282,15 +283,11 @@ fn generate_profile_dwarf(
             None,
         );
 
-        // Build line program sequences for all compiled functions.
-        for func in translation.module.defined_func_indices() {
-            use wasmtime_environ::FuncKey;
-
-            let (sym, meta) = compilation.function(module, func);
-            let line_offset = *translation
-                .line_offsets
-                .get(&FuncKey::DefinedWasmFunction(module, func))
-                .expect("expect line_offset") as u64;
+        // Build line program sequences for all compiled functions with profile info.
+        for (key, &line_offset) in translation.line_offsets.iter() {
+            let Some((sym, meta)) = compilation.function_by_key(*key) else {
+                continue;
+            };
             let address_map = &meta.address_map;
 
             if address_map.instructions.is_empty() {
@@ -305,11 +302,19 @@ fn generate_profile_dwarf(
             // Emit a row for offset zero - debuggers expect this.
             out_program.row().address_offset = 0;
             out_program.row().file = file_index;
-            out_program.row().line = line_offset;
+            out_program.row().line = line_offset as u64;
             out_program.row().column = 0;
             out_program.row().is_statement = true;
-            out_program.row().prologue_end = true;
-            out_program.generate_row();
+            if address_map.body_offset > 0 {
+                out_program.row().prologue_end = false;
+                out_program.generate_row();
+                out_program.row().address_offset = address_map.body_offset as u64;
+                out_program.row().prologue_end = true;
+                out_program.generate_row();
+            } else {
+                out_program.row().prologue_end = true;
+                out_program.generate_row();
+            }
 
             let mut last_line = 0;
             let mut last_column = 0;
@@ -317,7 +322,7 @@ fn generate_profile_dwarf(
             for instr in address_map.instructions.iter() {
                 if let Some(bits) = instr.srcloc.file_offset() {
                     let (line, column) = decode_srcloc(SourceLoc::new(bits));
-                    last_line = line as u64 + line_offset;
+                    last_line = line as u64 + line_offset as u64;
                     last_column = column as u64;
                 };
 
@@ -358,8 +363,10 @@ fn generate_profile_dwarf(
         root.set(gimli::DW_AT_comp_dir, write::AttributeValue::StringRef(id));
 
         // Add subprogram DIEs for each function.
-        for func in translation.module.defined_func_indices() {
-            let (sym, meta) = compilation.function(module, func);
+        for key in translation.line_offsets.keys() {
+            let Some((sym, meta)) = compilation.function_by_key(*key) else {
+                continue;
+            };
             let address_map = &meta.address_map;
 
             if address_map.instructions.is_empty() {
@@ -380,14 +387,27 @@ fn generate_profile_dwarf(
                 write::AttributeValue::Udata(address_map.body_len as u64),
             );
 
-            let func_index = translation.module.func_index(func);
-            let func_name = translation
-                .debuginfo
-                .name_section
-                .func_names
-                .get(&func_index)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("wasm-function[{}]", func_index.as_u32()));
+            let func_name = match key {
+                FuncKey::DefinedWasmFunction(_, func) => {
+                    let func_index = translation.module.func_index(*func);
+                    translation
+                        .debuginfo
+                        .name_section
+                        .func_names
+                        .get(&func_index)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("wasm-function[{}]", func_index.as_u32()))
+                }
+                FuncKey::ArrayToWasmTrampoline(_, func) => {
+                    let func_index = translation.module.func_index(*func);
+                    format!("array_to_wasm_trampoline[{}]", func_index.as_u32())
+                }
+                FuncKey::WasmToArrayTrampoline(_) => "wasm_to_array_trampoline".to_string(),
+                FuncKey::WasmToBuiltinTrampoline(builtin) => {
+                    format!("wasm_to_builtin_trampoline[{}]", builtin.index())
+                }
+                _ => format!("{:?}", key),
+            };
             let func_name_id = out_dwarf.strings.add(func_name);
             die.set(
                 gimli::DW_AT_name,
