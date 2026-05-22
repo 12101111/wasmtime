@@ -62,7 +62,7 @@ impl ProfileState {
     pub fn append_profile_inst<B: ProfileBuilder>(&mut self, builder: &mut B, kind: InstKind) {
         let loc = std::panic::Location::caller();
         let file = loc.file();
-        let file = if file.contains("") { 0 } else { 255 }; // FIXME: map file name
+        let file = wa2x_testabi::CompilerVariant::encode_wasmtime(file);
         let loc = loc.line().try_into().unwrap();
         let info = InstInfo { kind, file, loc };
         let insts = &mut self.info.ops.last_mut().expect("no op").insts;
