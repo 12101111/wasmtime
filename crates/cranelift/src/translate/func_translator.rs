@@ -78,7 +78,8 @@ impl FuncTranslator {
             use crate::profile::ProfileState;
 
             let func_name = format!("{}", builder.func.name);
-            let profile = ProfileState::new(func_name);
+            let profile =
+                ProfileState::new(func_name, reader.current_position().try_into().unwrap());
             builder
                 .func
                 .params
@@ -289,6 +290,16 @@ fn parse_function_body(
         }
         let operand_types =
             validate_op_and_get_operand_types(validator, environ, &mut operand_types, &op, pos)?;
+
+        #[cfg(feature = "profiler")]
+        if environ.tunables().enable_profile {
+            environ.append_profile_opkind(
+                builder,
+                wa2x_testabi::OperatorKind::from(&op),
+                pos.try_into().unwrap(),
+            );
+            environ.next_srcloc = environ.profile.as_ref().unwrap().current_srcloc();
+        }
 
         environ.before_translate_operator(&op, operand_types, builder)?;
         translate_operator(validator, &op, operand_types, builder, environ)?;

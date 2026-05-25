@@ -35,17 +35,18 @@ pub struct ProfileState {
 
 impl ProfileState {
     /// Create a new profiler state for the given function name with EntryBlock as entry_op.
-    pub fn new(func_name: String) -> Self {
-        Self::new_with_op(func_name, OperatorKind::EntryBlock)
+    pub fn new(func_name: String, pos: u32) -> Self {
+        Self::new_with_op(func_name, OperatorKind::EntryBlock, pos)
     }
 
     /// Create a new profiler state for the given function name with entry_op.
-    pub fn new_with_op(func_name: String, entry_op: OperatorKind) -> Self {
+    pub fn new_with_op(func_name: String, entry_op: OperatorKind, pos: u32) -> Self {
         Self {
             info: FuncProfileInfo {
                 func_name,
                 ops: vec![OpProfileInfo {
                     op: entry_op,
+                    pos,
                     insts: vec![],
                 }],
             },
@@ -53,8 +54,8 @@ impl ProfileState {
     }
 
     /// Append a new operator kind as a new line.
-    pub fn append_opkind(&mut self, op: OperatorKind) {
-        self.info.ops.push(OpProfileInfo { op, insts: vec![] });
+    pub fn append_opkind(&mut self, op: OperatorKind, pos: u32) {
+        self.info.ops.push(OpProfileInfo { op, pos, insts: vec![] });
     }
 
     /// Append an instruction to the current operator and set the builder's srcloc to the current loc.

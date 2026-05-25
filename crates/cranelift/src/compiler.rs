@@ -393,7 +393,7 @@ impl wasmtime_environ::Compiler for Compiler {
         let (mut builder, block0) = compiler.builder(func);
         #[cfg(feature = "profiler")]
         let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline);
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
 
         #[cfg(feature = "profiler")]
         builder
@@ -790,7 +790,7 @@ impl wasmtime_environ::Compiler for Compiler {
         let vmctx = builder.block_params(block0)[0];
         #[cfg(feature = "profiler")]
         let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline);
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
 
         #[cfg(feature = "profiler")]
         builder
@@ -1373,7 +1373,7 @@ impl Compiler {
         let (mut builder, block0) = compiler.builder(func);
         #[cfg(feature = "profiler")]
         let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::A2WTrampoline);
+            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::A2WTrampoline, 0);
 
         #[cfg(feature = "profiler")]
         builder

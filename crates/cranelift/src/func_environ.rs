@@ -3719,12 +3719,6 @@ impl FuncEnvironment<'_> {
         _operand_types: Option<&[WasmValType]>,
         builder: &mut FunctionBuilder,
     ) -> WasmResult<()> {
-        #[cfg(feature = "profiler")]
-        if self.tunables.enable_profile {
-            self.append_profile_opkind(builder, wa2x_testabi::OperatorKind::from(op));
-            self.next_srcloc = self.profile.as_ref().unwrap().current_srcloc();
-        }
-
         if self.tunables.consume_fuel {
             self.fuel_before_op(op, builder, self.is_reachable());
         }
@@ -3810,9 +3804,10 @@ impl FuncEnvironment<'_> {
         &mut self,
         builder: &mut FunctionBuilder,
         op: wa2x_testabi::OperatorKind,
+        pos: u32,
     ) {
         if let Some(profile) = &mut self.profile {
-            profile.append_opkind(op);
+            profile.append_opkind(op, pos);
             profile.append_profile_default_inst(builder);
         }
     }
