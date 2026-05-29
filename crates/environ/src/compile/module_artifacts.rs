@@ -219,7 +219,11 @@ impl<'a> ObjectBuilder<'a> {
         if self.tunables.enable_profile
             && let Some(profile) = profile
         {
-            let profile_data = postcard::to_allocvec(&profile)?;
+            let inner = profile.module;
+            let multi = wa2x_testabi::MultiModuleProfileInfo {
+                modules: vec![inner]
+            };
+            let profile_data = postcard::to_allocvec(&multi)?;
             let profile_section = self.obj.add_section(
                 self.obj.segment_name(StandardSegment::Data).to_vec(),
                 obj::ELF_WASMTIME_PROFILE.as_bytes().to_vec(),

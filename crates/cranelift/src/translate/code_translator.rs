@@ -222,7 +222,9 @@ pub fn translate_operator(
                 arg2 = optionally_bitcast_vector(arg2, I8X16, builder);
             }
 
+            append_profile_inst!(environ, builder, Select);
             let val = builder.ins().select(cond, arg1, arg2);
+            append_profile_default_inst!(environ, builder);
 
             // If either of the input types need inclusion in stack maps, then
             // the result will as well.
