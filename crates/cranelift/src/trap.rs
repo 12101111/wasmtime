@@ -97,6 +97,7 @@ pub trait TranslateTrap {
         }
     }
 
+    #[track_caller]
     fn trapz(&mut self, builder: &mut FunctionBuilder, value: ir::Value, trap: ir::TrapCode) {
         if self.clif_instruction_traps_enabled() {
             self.builder_trapz(builder, value, trap);
@@ -108,6 +109,7 @@ pub trait TranslateTrap {
         }
     }
 
+    #[track_caller]
     fn trapnz(&mut self, builder: &mut FunctionBuilder, value: ir::Value, trap: ir::TrapCode) {
         if self.clif_instruction_traps_enabled() {
             self.builder_trapnz(builder, value, trap);
@@ -119,6 +121,7 @@ pub trait TranslateTrap {
         }
     }
 
+    #[track_caller]
     fn uadd_overflow_trap(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -139,6 +142,7 @@ pub trait TranslateTrap {
     ///
     /// This should only be used if `self.clif_instruction_traps_enabled()` is
     /// false, otherwise native CLIF instructions should be used instead.
+    #[track_caller]
     fn conditionally_trap(
         &mut self,
         builder: &mut FunctionBuilder,

@@ -1332,6 +1332,7 @@ impl TranslateTrap for FuncEnvironment<'_> {
         &self.compiler
     }
 
+    #[track_caller]
     fn vmctx_val(&mut self, pos: &mut FuncCursor<'_>) -> ir::Value {
         let pointer_type = self.pointer_type();
         let vmctx = self.vmctx(&mut pos.func);
@@ -1350,10 +1351,12 @@ impl TranslateTrap for FuncEnvironment<'_> {
         FuncEnvironment::debug_tags(self, srcloc)
     }
 
+    #[track_caller]
     fn builder_trap(&mut self, builder: &mut FunctionBuilder, trap: ir::TrapCode) {
         self.build_trap(builder, trap);
     }
 
+    #[track_caller]
     fn builder_trapz(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -1363,6 +1366,7 @@ impl TranslateTrap for FuncEnvironment<'_> {
         self.build_trapz(builder, value, trap);
     }
 
+    #[track_caller]
     fn builder_trapnz(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -1372,6 +1376,7 @@ impl TranslateTrap for FuncEnvironment<'_> {
         self.build_trapnz(builder, value, trap);
     }
 
+    #[track_caller]
     fn builder_brif<'a>(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -1384,6 +1389,7 @@ impl TranslateTrap for FuncEnvironment<'_> {
         self.build_brif(builder, cond, block_then, args_then, block_else, args_else)
     }
 
+    #[track_caller]
     fn builder_call(
         &mut self,
         builder: &mut FunctionBuilder,
