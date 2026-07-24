@@ -3635,14 +3635,14 @@ impl FuncEnvironment<'_> {
         let pointer_type = self.pointer_type();
         let vmctx = self.vmctx(&mut pos.func);
         let is_shared = self.module.memories[index].shared;
-        let base = self.build_global_value(&mut pos, pointer_type, vmctx);
+        let base = self.build_global_value(pos, pointer_type, vmctx);
         match self.module.defined_memory_index(index) {
             Some(def_index) => {
                 if is_shared {
                     let offset =
                         i32::try_from(self.offsets.vmctx_vmmemory_pointer(def_index)).unwrap();
                     let vmmemory_ptr = self.build_load(
-                        &mut pos,
+                        pos,
                         pointer_type,
                         ir::MemFlagsData::trusted(),
                         base,
@@ -3671,7 +3671,7 @@ impl FuncEnvironment<'_> {
                     )
                     .unwrap();
                     self.build_load(
-                        &mut pos,
+                        pos,
                         pointer_type,
                         ir::MemFlagsData::trusted(),
                         base,
@@ -3682,7 +3682,7 @@ impl FuncEnvironment<'_> {
             None => {
                 let offset = i32::try_from(self.offsets.vmctx_vmmemory_import_from(index)).unwrap();
                 let vmmemory_ptr = self.build_load(
-                    &mut pos,
+                    pos,
                     pointer_type,
                     ir::MemFlagsData::trusted(),
                     base,
@@ -3700,7 +3700,7 @@ impl FuncEnvironment<'_> {
                     )
                 } else {
                     self.build_load(
-                        &mut pos,
+                        pos,
                         pointer_type,
                         ir::MemFlagsData::trusted(),
                         vmmemory_ptr,
@@ -3811,7 +3811,7 @@ impl FuncEnvironment<'_> {
                             env.manual_fuel_check(builder, fuel_consumed);
                         }
                         let memory_copy = env.builtin_functions.memory_copy(&mut builder.func);
-                        self.build_call(builder, memory_copy, &[vmctx, dst, src, len]);
+                        builder.ins().call(memory_copy, &[vmctx, dst, src, len]);
                     }
                     BulkOp::MemoryFill { dst, val, len } => {
                         if env.tunables.consume_fuel {
@@ -3823,7 +3823,7 @@ impl FuncEnvironment<'_> {
                             env.manual_fuel_check(builder, fuel_consumed);
                         }
                         let memory_fill = env.builtin_functions.memory_fill(&mut builder.func);
-                        self.build_call(builder,memory_fill, &[vmctx, dst, val, len]);
+                        builder.ins().call(memory_fill, &[vmctx, dst, val, len]);
                     }
                 }
             };
@@ -3831,7 +3831,10 @@ impl FuncEnvironment<'_> {
         // If epochs and fuel are disabled, then just call the libcall and
         // return. No need for the loops below.
         if !self.tunables.epoch_interruption && !self.tunables.consume_fuel {
+            // can't use build_call in closure, because it cannot be FnMut
+            append_profile_inst!(self, builder, Call);
             raw_call(self, builder, &op);
+            append_profile_default_inst!(self, builder);
             return;
         }
 
@@ -4351,7 +4354,7 @@ impl FuncEnvironment<'_> {
     pub fn translate_table_size(&mut self, pos: FuncCursor, table_index: TableIndex) -> ir::Value {
         let table_data = self.get_or_create_table(pos.func, table_index);
         let index_type = index_type_to_ir_type(self.table(table_index).idx_type);
-        table_data.bound.bound(&*self.isa, pos, index_type)
+        table_data.bound.bound(self, pos, index_type)
     }
 
     /// Copies elements from `src_entity` to `dst_entity`.
@@ -5452,7 +5455,7 @@ impl FuncEnvironment<'_> {
     #[track_caller]
     pub fn build_load<
         B: crate::ProfileBuilder,
-        T1: Into<ir::MemFlags>,
+        T1: Into<ir::MemFlagsData>,
         T2: Into<ir::immediates::Offset32>,
     >(
         &mut self,
@@ -5471,7 +5474,7 @@ impl FuncEnvironment<'_> {
     #[track_caller]
     pub fn build_store<
         B: crate::ProfileBuilder,
-        T1: Into<ir::MemFlags>,
+        T1: Into<ir::MemFlagsData>,
         T2: Into<ir::immediates::Offset32>,
     >(
         &mut self,

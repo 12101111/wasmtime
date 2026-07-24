@@ -4051,7 +4051,7 @@ fn translate_br_if(
         });
     }
 
-    canonicalise_brif(builder, env, val, br_destination, inputs, next_block, &[]);
+    canonicalise_brif(builder, env, val, br_destination, &inputs_vec, next_block, &[]);
 
     builder.seal_block(next_block); // The only predecessor is the current block.
     builder.switch_to_block(next_block);

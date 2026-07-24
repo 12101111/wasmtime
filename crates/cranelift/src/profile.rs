@@ -14,8 +14,8 @@ use crate::ProfileBuilder;
 /// Uses the high 24 bits for the line number and the low 8 bits for the column.
 /// This allows up to ~16M ops for a function and 255 columns per line.
 pub fn encode_srcloc(line: u32, column: u32) -> SourceLoc {
-    debug_assert!(line < (1 << 24), "line number too large: {line}");
-    debug_assert!(column < (1 << 8), "column too large: {column}");
+    assert!(line < (1 << 24), "line number too large: {line}");
+    assert!(column < (1 << 8), "column too large: {column}");
     let bits = (line << 8) | column;
     SourceLoc::new(bits)
 }

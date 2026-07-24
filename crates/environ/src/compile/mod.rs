@@ -4,7 +4,7 @@
 use crate::error::Result;
 use crate::prelude::*;
 use crate::{
-    DefinedFuncIndex, FlagValue, FuncKey, FunctionLoc, ObjectKind, PrimaryMap, StaticModuleIndex,
+    FlagValue, FuncKey, FunctionLoc, ObjectKind, PrimaryMap, StaticModuleIndex,
     TripleExt, Tunables, WasmError, obj,
 };
 use object::write::{Object, SymbolId};

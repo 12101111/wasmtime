@@ -39,11 +39,10 @@ use wasmtime_environ::error::{Context as _, Result};
 use wasmtime_environ::obj::{ELF_WASMTIME_EXCEPTIONS, ELF_WASMTIME_FRAMES};
 use wasmtime_environ::{
     Abi, AddressMapSection, BuiltinFunctionIndex, CacheStore, CompileError, CompiledFunctionBody,
-    DefinedFuncIndex, FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder,
-    FrameTableBuilder, FuncKey, FunctionBodyData, FunctionLoc, HostCall, Inlining,
-    InliningCompiler, ModulePC, ModuleStartup, ModuleTranslation, ModuleTypesBuilder, PtrSize,
-    StackMapSection, StaticModuleIndex, TrapEncodingBuilder, TrapSentinel, TripleExt, Tunables,
-    WasmFuncType, WasmValType, prelude::*,
+    FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder, FrameTableBuilder, FuncKey,
+    FunctionBodyData, FunctionLoc, HostCall, Inlining, InliningCompiler, ModulePC, ModuleStartup,
+    ModuleTranslation, ModuleTypesBuilder, PtrSize, StackMapSection, StaticModuleIndex,
+    TrapEncodingBuilder, TrapSentinel, TripleExt, Tunables, WasmFuncType, WasmValType, prelude::*,
 };
 use wasmtime_unwinder::ExceptionTableBuilder;
 
@@ -215,8 +214,11 @@ impl Compiler {
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_call_sig);
         let (mut builder, block0) = compiler.builder(func);
         #[cfg(feature = "profiler")]
-        let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
+        let mut profile = ProfileState::new_with_op(
+            symbol.to_owned(),
+            wa2x_testabi::OperatorKind::W2ATrampoline,
+            0,
+        );
 
         #[cfg(feature = "profiler")]
         builder
@@ -355,8 +357,11 @@ impl Compiler {
         let (mut builder, block0) = compiler.builder(func);
         let vmctx = builder.block_params(block0)[0];
         #[cfg(feature = "profiler")]
-        let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::W2ATrampoline, 0);
+        let mut profile = ProfileState::new_with_op(
+            symbol.to_owned(),
+            wa2x_testabi::OperatorKind::W2ATrampoline,
+            0,
+        );
 
         #[cfg(feature = "profiler")]
         builder
@@ -454,6 +459,14 @@ impl Compiler {
         let (namespace, index) = key.into_raw_parts();
         context.func.name = UserFuncName::User(UserExternalName { namespace, index });
         let mut func_env = FuncEnvironment::new(self, translation, types, ty, key, None, 0);
+
+        #[cfg(feature = "profiler")]
+        let profile = ProfileState::new_with_op(
+            "init_func".to_owned(),
+            wa2x_testabi::OperatorKind::InitFunc,
+            0,
+        );
+
         compiler
             .cx
             .func_translator
@@ -461,6 +474,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: func_env.needs_gc_heap(),
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 }
@@ -1453,8 +1468,11 @@ impl Compiler {
         let func = ir::Function::with_name_signature(key_to_name(trampoline_key), array_call_sig);
         let (mut builder, block0) = compiler.builder(func);
         #[cfg(feature = "profiler")]
-        let mut profile =
-            ProfileState::new_with_op(symbol.to_owned(), wa2x_testabi::OperatorKind::A2WTrampoline, 0);
+        let mut profile = ProfileState::new_with_op(
+            symbol.to_owned(),
+            wa2x_testabi::OperatorKind::A2WTrampoline,
+            0,
+        );
 
         #[cfg(feature = "profiler")]
         builder
