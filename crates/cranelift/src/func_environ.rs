@@ -4934,7 +4934,7 @@ impl FuncEnvironment<'_> {
             .with_endianness(Endianness::Little)
             .with_alias_region(dst_region);
         const WIDTHS: &[(u64, ir::Type)] = &[
-            (16, ir::types::I8X16),
+            // (16, ir::types::I8X16),
             (8, ir::types::I64),
             (4, ir::types::I32),
             (2, ir::types::I16),
