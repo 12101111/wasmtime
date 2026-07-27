@@ -13,11 +13,13 @@ use crate::ProfileBuilder;
 ///
 /// Uses the high 24 bits for the line number and the low 8 bits for the column.
 /// This allows up to ~16M ops for a function and 255 columns per line.
-pub fn encode_srcloc(line: u32, column: u32) -> SourceLoc {
-    assert!(line < (1 << 24), "line number too large: {line}");
-    assert!(column < (1 << 8), "column too large: {column}");
+pub fn encode_srcloc(line: u32, column: u32) -> Option<SourceLoc> {
+    if line >= (1 << 24) || column >= (1 << 8) {
+        log::error!("line/column: {line}/{column} too large");
+        return None;
+    }
     let bits = (line << 8) | column;
-    SourceLoc::new(bits)
+    Some(SourceLoc::new(bits))
 }
 
 /// Decode a `SourceLoc` into a (line, column) pair.
@@ -55,7 +57,11 @@ impl ProfileState {
 
     /// Append a new operator kind as a new line.
     pub fn append_opkind(&mut self, op: OperatorKind, pos: u32) {
-        self.info.ops.push(OpProfileInfo { op, pos, insts: vec![] });
+        self.info.ops.push(OpProfileInfo {
+            op,
+            pos,
+            insts: vec![],
+        });
     }
 
     /// Append an instruction to the current operator and set the builder's srcloc to the current loc.
@@ -69,13 +75,21 @@ impl ProfileState {
         let insts = &mut self.info.ops.last_mut().expect("no op").insts;
         insts.push(info);
         let column = insts.len().try_into().unwrap();
-        builder.set_srcloc(encode_srcloc(self.current_line(), column));
+        if let Some(loc) = encode_srcloc(self.current_line(), column) {
+            builder.set_srcloc(loc);
+        } else {
+            panic!("encode error: {:?}", self.info)
+        }
     }
 
     /// Reset the builder's srcloc to column 0.
     #[cfg(feature = "profiler")]
     pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&self, builder: &mut B) {
-        builder.set_srcloc(encode_srcloc(self.current_line(), 0));
+        if let Some(loc) = encode_srcloc(self.current_line(), 0) {
+            builder.set_srcloc(loc);
+        } else {
+            panic!("encode error: {:?}", self.info)
+        }
     }
 
     /// Get the current line number.
@@ -84,7 +98,11 @@ impl ProfileState {
     }
 
     pub(crate) fn current_srcloc(&self) -> SourceLoc {
-        encode_srcloc(self.current_line(), 0)
+        if let Some(loc) = encode_srcloc(self.current_line(), 0) {
+            loc
+        } else {
+            panic!("encode error: {:?}", self.info)
+        }
     }
 
     /// Consume this state and return the collected function profile info.

@@ -75,16 +75,18 @@ impl FuncTranslator {
         // Initialize profile state for this function, if profiling is enabled.
         #[cfg(feature = "profiler")]
         {
-            use crate::profile::ProfileState;
+            if environ.tunables().enable_profile {
+                use crate::profile::ProfileState;
 
-            let func_name = format!("{}", builder.func.name);
-            let profile =
-                ProfileState::new(func_name, reader.current_position().try_into().unwrap());
-            builder
-                .func
-                .params
-                .ensure_base_srcloc(profile.current_srcloc());
-            environ.profile = Some(profile)
+                let func_name = format!("{}", builder.func.name);
+                let profile =
+                    ProfileState::new(func_name, reader.current_position().try_into().unwrap());
+                builder
+                    .func
+                    .params
+                    .ensure_base_srcloc(profile.current_srcloc());
+                environ.profile = Some(profile)
+            }
         }
 
         let entry_block = builder.create_block();
