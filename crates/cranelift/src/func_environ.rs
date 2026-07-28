@@ -4498,7 +4498,7 @@ impl FuncEnvironment<'_> {
                         .builtin_functions
                         .passive_elem_segment_len(&mut builder.func);
                     let idx = builder.ins().iconst(I32, i64::from(passive_index.as_u32()));
-                    let call = builder.ins().call(libcall, &[vmctx, idx]);
+                    let call = self.build_call(builder, libcall, &[vmctx, idx]);
                     builder.func.dfg.first_result(call)
                 }
                 None => builder.ins().iconst(pointer_type, 0),
@@ -4557,12 +4557,12 @@ impl FuncEnvironment<'_> {
         let base = match entity {
             CheckedEntity::Memory(i) => {
                 let heap = self.get_or_create_heap(builder.func, i);
-                let heap = &self.heaps()[heap];
-                builder.ins().global_value(pointer_type, heap.base)
+                let base = self.heaps()[heap].base;
+                self.build_global_value(builder, pointer_type, base)
             }
             CheckedEntity::Table { table, .. } => {
                 let table = self.get_or_create_table(builder.func, table);
-                builder.ins().global_value(pointer_type, table.base_gv)
+                self.build_global_value(builder, pointer_type, table.base_gv)
             }
             CheckedEntity::Data { segment, .. } => match self.translation.runtime_data_map[segment]
             {
@@ -4582,7 +4582,7 @@ impl FuncEnvironment<'_> {
                         .builtin_functions
                         .passive_elem_segment_base(builder.func);
                     let idx = builder.ins().iconst(I32, i64::from(passive_index.as_u32()));
-                    let call = builder.ins().call(libcall, &[vmctx, idx]);
+                    let call = self.build_call(builder, libcall, &[vmctx, idx]);
                     builder.func.dfg.first_result(call)
                 }
 
@@ -4628,7 +4628,7 @@ impl FuncEnvironment<'_> {
         let vmctx = self.vmctx_val(&mut builder.cursor());
         let offset = i32::try_from(self.offsets.vmctx_runtime_data_length(runtime_index)).unwrap();
         let flags = ir::MemFlagsData::trusted();
-        builder.ins().load(I32, flags, vmctx, offset)
+        self.build_load(builder, I32, flags, vmctx, offset)
     }
 
     fn load_runtime_data_length_as_pointer(
@@ -4647,8 +4647,10 @@ impl FuncEnvironment<'_> {
     ) -> ir::Value {
         let vmctx = self.vmctx_val(&mut builder.cursor());
         let offset = i32::try_from(self.offsets.vmctx_runtime_data_base(runtime_index)).unwrap();
-        builder.ins().load(
-            self.pointer_type(),
+        let pointer_type = self.pointer_type();
+        self.build_load(
+            builder,
+            pointer_type,
             ir::MemFlagsData::trusted(),
             vmctx,
             offset,

@@ -126,6 +126,18 @@ impl FuncTranslator {
         environ: &mut FuncEnvironment<'_>,
     ) -> WasmResult<()> {
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
+        // When profiling, the whole synthesized startup function is mapped to
+        // its single `InitFunc` profile line: use the base srcloc installed by
+        // the caller (`compile_module_startup`) as the builder's srcloc so
+        // that every instruction emitted below resolves to that line.
+        let profile_srcloc =
+            cfg_select!(feature = "profiler" => environ.tunables().enable_profile, _ => { false });
+        if profile_srcloc {
+            let base = builder.func.params.base_srcloc();
+            if !base.is_default() {
+                builder.set_srcloc(base);
+            }
+        }
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);

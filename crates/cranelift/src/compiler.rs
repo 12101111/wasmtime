@@ -466,6 +466,17 @@ impl Compiler {
             wa2x_testabi::OperatorKind::InitFunc,
             0,
         );
+        // This synthesized function is mapped to the profile's single
+        // `InitFunc` line as a whole: install that line's srcloc as the
+        // function's base srcloc so that the builder srcloc set up by
+        // `translate_module_startup` resolves to it.
+        #[cfg(feature = "profiler")]
+        if self.tunables.enable_profile {
+            context
+                .func
+                .params
+                .ensure_base_srcloc(profile.current_srcloc());
+        }
 
         compiler
             .cx
