@@ -8,11 +8,12 @@ use cranelift_codegen::{
     CodegenResult,
     isa::{self, OwnedTargetIsa},
 };
+use wasmtime_core::bail;
 use std::fmt;
 use std::path;
 use std::sync::Arc;
 use target_lexicon::Triple;
-use wasmtime_environ::error::Result;
+use wasmtime_environ::{Inlining, error::Result};
 use wasmtime_environ::{CacheStore, CompilerBuilder, Setting, Tunables};
 
 struct Builder {
@@ -108,6 +109,14 @@ impl CompilerBuilder for Builder {
     }
 
     fn set_tunables(&mut self, tunables: Tunables) -> Result<()> {
+        if tunables.enable_profile {
+            if tunables.inlining == Inlining::Yes {
+                bail!("Wa2x profile don't work with whole module inlining in cranelift")
+            }
+            if tunables.debug_guest || tunables.debug_native {
+                bail!("Wa2x profile is incompatible with debug")
+            }
+        }
         self.tunables = Some(tunables);
         Ok(())
     }
