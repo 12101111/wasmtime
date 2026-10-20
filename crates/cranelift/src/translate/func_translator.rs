@@ -329,7 +329,7 @@ fn parse_function_body(
         if environ.tunables().enable_profile {
             environ.append_profile_opkind(
                 builder,
-                wa2x_testabi::OperatorKind::from(&op),
+                (&op).into(),
                 pos.try_into().unwrap(),
             );
             environ.next_srcloc = environ.profile.as_ref().unwrap().current_srcloc();

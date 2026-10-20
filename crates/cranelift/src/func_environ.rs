@@ -4,7 +4,7 @@ pub(crate) mod stack_switching;
 use crate::alias_region_key::AliasRegionKey;
 use crate::compiler::Compiler;
 #[cfg(feature = "profiler")]
-use crate::profile::ProfileState;
+use crate::profile::{OperatorKind, ProfileState};
 use crate::translate::{
     FuncTranslationStacks, GlobalVariable, Heap, HeapData, MemoryKind, StructFieldsVec, TableData,
     TableSize, TargetEnvironment,
@@ -35,6 +35,8 @@ use wasmparser::{
     BranchHint, FuncValidator, Operator, SectionLimitedIntoIter, WasmFeatures, WasmModuleResources,
 };
 use wasmtime_core::math::f64_cvt_to_int_bounds;
+#[cfg(feature = "profiler")]
+use wasmtime_environ::profile::InstKind;
 use wasmtime_environ::{
     BuiltinFunctionIndex, ComponentPC, ConstExpr, ConstOp, DataIndex, DefinedFuncIndex,
     DefinedGlobalIndex, DefinedTableIndex, ElemIndex, EngineOrModuleTypeIndex,
@@ -5423,7 +5425,7 @@ impl FuncEnvironment<'_> {
     pub fn append_profile_opkind(
         &mut self,
         builder: &mut FunctionBuilder,
-        op: wa2x_testabi::OperatorKind,
+        op: OperatorKind,
         pos: u32,
     ) {
         if let Some(profile) = &mut self.profile {
@@ -5438,7 +5440,7 @@ impl FuncEnvironment<'_> {
     pub fn append_profile_inst<B: crate::ProfileBuilder>(
         &mut self,
         builder: &mut B,
-        kind: wa2x_testabi::InstKind,
+        kind: InstKind,
     ) {
         if let Some(profile) = &mut self.profile {
             profile.append_profile_inst(builder, kind);

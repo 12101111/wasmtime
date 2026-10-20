@@ -1,7 +1,7 @@
 use crate::debug::DwarfSectionRelocTarget;
 use crate::func_environ::FuncEnvironment;
 #[cfg(feature = "profiler")]
-use crate::profile::ProfileState;
+use crate::profile::{OperatorKind, ProfileState};
 use crate::translate::FuncTranslator;
 use crate::{BuiltinFunctionSignatures, builder::LinkOptions, wasm_call_signature};
 use crate::{CompiledFunction, ModuleTextBuilder, array_call_signature};
@@ -216,7 +216,7 @@ impl Compiler {
         #[cfg(feature = "profiler")]
         let mut profile = ProfileState::new_with_op(
             symbol.to_owned(),
-            wa2x_testabi::OperatorKind::W2ATrampoline,
+            OperatorKind::W2ATrampoline,
             0,
         );
 
@@ -359,7 +359,7 @@ impl Compiler {
         #[cfg(feature = "profiler")]
         let mut profile = ProfileState::new_with_op(
             symbol.to_owned(),
-            wa2x_testabi::OperatorKind::W2ATrampoline,
+            OperatorKind::W2ATrampoline,
             0,
         );
 
@@ -463,7 +463,7 @@ impl Compiler {
         #[cfg(feature = "profiler")]
         let profile = ProfileState::new_with_op(
             "init_func".to_owned(),
-            wa2x_testabi::OperatorKind::InitFunc,
+            OperatorKind::InitFunc,
             0,
         );
         // This synthesized function is mapped to the profile's single
@@ -1481,7 +1481,7 @@ impl Compiler {
         #[cfg(feature = "profiler")]
         let mut profile = ProfileState::new_with_op(
             symbol.to_owned(),
-            wa2x_testabi::OperatorKind::A2WTrampoline,
+            OperatorKind::A2WTrampoline,
             0,
         );
 

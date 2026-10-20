@@ -177,7 +177,7 @@ pub struct CompiledFunctionBody {
     pub needs_gc_heap: bool,
     /// Virtual source code mapping for this function, when profiling is enabled.
     #[cfg(feature = "profiler")]
-    pub profile: Option<wa2x_testabi::FuncProfileInfo>,
+    pub profile: Option<crate::profile::FuncProfileInfo>,
 }
 
 /// An implementation of a compiler which can compile WebAssembly functions to

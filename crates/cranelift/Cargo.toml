@@ -33,8 +33,6 @@ itertools = { workspace = true }
 pulley-interpreter = { workspace = true, optional = true }
 wasmtime-core = { workspace = true }
 wasmtime-unwinder = { workspace = true, features = ["cranelift"] }
-wa2x-testabi = { workspace = true, optional = true }
-postcard = { workspace = true, optional = true }
 
 [dependencies.wasmtime-environ]
 workspace = true
@@ -53,4 +51,4 @@ all-arch = ["cranelift-codegen/all-arch"]
 host-arch = ["cranelift-codegen/host-arch"]
 pulley = ["cranelift-codegen/pulley", "dep:pulley-interpreter"]
 trace-log = ["cranelift-codegen/trace-log"]
-profiler = ["wasmtime-environ/profiler", "dep:wa2x-testabi", "dep:postcard"]
+profiler = ["wasmtime-environ/profiler"]

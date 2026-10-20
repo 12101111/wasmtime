@@ -492,7 +492,7 @@ macro_rules! append_profile_inst {
     ($self: expr, $builder: expr, $kind: ident) => {
         #[cfg(feature = "profiler")]
         {
-            $self.append_profile_inst($builder, wa2x_testabi::InstKind::$kind);
+            $self.append_profile_inst($builder, wasmtime_environ::profile::InstKind::$kind);
         }
     };
 }

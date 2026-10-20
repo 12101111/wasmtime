@@ -5,7 +5,12 @@
 //! and machine code, using DWARF debug information.
 
 use cranelift_codegen::ir::SourceLoc;
-use wa2x_testabi::{FuncProfileInfo, InstInfo, InstKind, OpProfileInfo, OperatorKind};
+use wasmtime_environ::profile::{
+    FuncProfileInfo, InstInfo, InstKind, OpProfileInfo, map_wasmtime_file,
+};
+
+mod operator;
+pub use operator::OperatorKind;
 
 use crate::ProfileBuilder;
 
@@ -47,7 +52,7 @@ impl ProfileState {
             info: FuncProfileInfo {
                 func_name,
                 ops: vec![OpProfileInfo {
-                    op: entry_op,
+                    op: entry_op as u32,
                     pos,
                     insts: vec![],
                 }],
@@ -58,7 +63,7 @@ impl ProfileState {
     /// Append a new operator kind as a new line.
     pub fn append_opkind(&mut self, op: OperatorKind, pos: u32) {
         self.info.ops.push(OpProfileInfo {
-            op,
+            op: op as u32,
             pos,
             insts: vec![],
         });
@@ -68,10 +73,13 @@ impl ProfileState {
     #[track_caller]
     pub fn append_profile_inst<B: ProfileBuilder>(&mut self, builder: &mut B, kind: InstKind) {
         let loc = std::panic::Location::caller();
-        let file = loc.file();
-        let file = wa2x_testabi::CompilerVariant::encode_wasmtime(file);
+        let file = map_wasmtime_file(loc.file());
         let loc = loc.line().try_into().unwrap();
-        let info = InstInfo { kind, file, loc };
+        let info = InstInfo {
+            kind: kind as u8,
+            file,
+            loc,
+        };
         let insts = &mut self.info.ops.last_mut().expect("no op").insts;
         insts.push(info);
         let column = insts.len().try_into().unwrap();

@@ -24,7 +24,7 @@ use wasmparser::{
     Validator, ValidatorResources, types::Types,
 };
 #[cfg(feature = "profiler")]
-use wa2x_testabi::ProfileInfo;
+use crate::profile::ProfileInfo;
 
 /// Object containing the standalone environment information.
 pub struct ModuleEnvironment<'a, 'data> {

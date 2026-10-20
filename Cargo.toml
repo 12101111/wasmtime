@@ -217,8 +217,8 @@ unused_extern_crates = 'warn'
 trivial_numeric_casts = 'warn'
 unstable_features = 'warn'
 unused_import_braces = 'warn'
-unused-lifetimes = 'warn'
-unused-macro-rules = 'warn'
+unused_lifetimes = 'warn'
+unused_macro_rules = 'warn'
 
 # Don't warn about unknown cfgs for our custom cfgs.
 [workspace.lints.rust.unexpected_cfgs]
@@ -442,7 +442,6 @@ tracing-subscriber = { version = "0.3.20", default-features = false, features = 
 url = "2.5.7"
 postcard = { version = "1.1.3", default-features = false, features = ['alloc'] }
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "rayon"] }
-wa2x-testabi = { path = "../runtime/tests/testabi", default-features = false, features = ['host'] }
 rustc-hash = { version = "2.1.1", default-features = false }
 libtest-mimic = "0.8.1"
 semver = { version = "1.0.27", default-features = false }

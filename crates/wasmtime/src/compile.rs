@@ -1081,7 +1081,7 @@ impl UnlinkedCompileOutputs<'_> {
         let mut needs_gc_heap = false;
 
         #[cfg(feature = "profiler")]
-        let mut profile = wa2x_testabi::ProfileInfo::new(format!("module"));
+        let mut profile = wasmtime_environ::profile::ProfileInfo::new(format!("module"));
         #[cfg(feature = "profiler")]
         let mut line_offsets = HashMap::new();
 
@@ -1134,7 +1134,7 @@ struct PreLinkOutput {
     indices: FunctionIndices,
     /// Module-level profile info collected from all compiled functions
     #[cfg(feature = "profiler")]
-    profile: wa2x_testabi::ProfileInfo,
+    profile: wasmtime_environ::profile::ProfileInfo,
     /// Line offsets for each function within the module's virtual source code.
     #[cfg(feature = "profiler")]
     line_offsets: HashMap<FuncKey, u32>,
