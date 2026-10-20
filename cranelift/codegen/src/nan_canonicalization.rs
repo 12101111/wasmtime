@@ -59,7 +59,12 @@ fn add_nan_canon_seq(pos: &mut FuncCursor, inst: Inst, has_vector_support: bool)
     let val = pos.func.dfg.first_result(inst);
     let val_type = pos.func.dfg.value_type(val);
     let new_res = pos.func.dfg.replace_result(val, val_type);
-    let _next_inst = pos.next_inst().expect("block missing terminator!");
+    let next_inst = pos.next_inst().expect("block missing terminator!");
+    // The canonicalization sequence belongs to the same source location as the
+    // floating point instruction it guards; otherwise the inserted
+    // instructions have no srcloc at all and debug info/profile info loses
+    // track of the operator they belong to.
+    let srcloc = pos.func.srcloc(inst);
 
     // Insert a comparison instruction, to check if `inst_res` is NaN (comparing
     // against NaN is always unordered). Select the canonical NaN value if `val`
@@ -128,6 +133,19 @@ fn add_nan_canon_seq(pos: &mut FuncCursor, inst: Inst, has_vector_support: bool)
         _ => {
             // Panic if the type given was not an IEEE floating point type.
             panic!("Could not canonicalize NaN: Unexpected result type found.");
+        }
+    }
+
+    // Propagate the source location to every instruction that was just
+    // inserted between `inst` and `next_inst`.
+    if !srcloc.is_default() {
+        let mut cur = pos.func.layout.next_inst(inst);
+        while let Some(new_inst) = cur {
+            if new_inst == next_inst {
+                break;
+            }
+            pos.func.set_srcloc(new_inst, srcloc);
+            cur = pos.func.layout.next_inst(new_inst);
         }
     }
 

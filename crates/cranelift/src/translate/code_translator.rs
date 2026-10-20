@@ -1146,27 +1146,35 @@ pub fn translate_operator(
         }
         Operator::I64TruncSatF64S | Operator::I64TruncSatF32S => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_sint_sat(I64, val));
+            // Saturating conversions are expanded by the backend into compares
+            // and conditional branches that clamp to the saturated result.
+            // Register the expansion in the profile so that this generated
+            // control flow has an instruction-level position.
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_sint_sat(I64, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I32TruncSatF64S | Operator::I32TruncSatF32S => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_sint_sat(I32, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_sint_sat(I32, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I64TruncSatF64U | Operator::I64TruncSatF32U => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_uint_sat(I64, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_uint_sat(I64, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I32TruncSatF64U | Operator::I32TruncSatF32U => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_uint_sat(I32, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_uint_sat(I32, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::F32ReinterpretI32 => {
             let val = environ.stacks.pop1();

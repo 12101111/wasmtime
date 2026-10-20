@@ -316,24 +316,27 @@ fn generate_profile_dwarf(
                 out_program.generate_row();
             }
 
-            let mut last_line = 0;
-            let mut last_column = 0;
-
             for instr in address_map.instructions.iter() {
-                if let Some(bits) = instr.srcloc.file_offset() {
-                    let (line, column) = decode_srcloc(SourceLoc::new(bits));
-                    last_line = line as u64 + line_offset as u64;
-                    last_column = column as u64;
+                // Entries without a source location (e.g. gaps between
+                // instructions, alignment padding, or instructions for which
+                // the compiler did not record a location) simply repeat the
+                // previous row. Emitting that row again would only bloat the
+                // line program: the previous row already covers this address.
+                let Some(bits) = instr.srcloc.file_offset() else {
+                    continue;
                 };
+                let (line, column) = decode_srcloc(SourceLoc::new(bits));
+                let line = line as u64 + line_offset as u64;
+                let column = column as u64;
 
                 out_program.row().address_offset = instr.code_offset as u64;
                 out_program.row().file = file_index;
-                out_program.row().line = last_line;
-                out_program.row().column = last_column;
+                out_program.row().line = line;
+                out_program.row().column = column;
                 out_program.row().is_statement = true;
                 out_program.row().prologue_end = false;
                 out_program.generate_row();
-                log::debug!("map {} to {}:{}", instr.code_offset, last_line, last_column);
+                log::debug!("map {} to {}:{}", instr.code_offset, line, column);
             }
 
             out_program.end_sequence(address_map.body_len as u64);
