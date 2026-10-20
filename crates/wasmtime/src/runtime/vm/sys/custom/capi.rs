@@ -172,16 +172,17 @@ unsafe extern "C" {
     #[cfg(has_virtual_memory)]
     pub fn wasmtime_memory_image_free(image: *mut wasmtime_memory_image);
 
-    /// Wasmtime requires a single pointer's space of TLS to be used at runtime,
-    /// and this function returns the current value of the TLS variable.
+    /// Wasmtime needs at least one pointer's worth of TLS space. The `slot`
+    /// variable is 0 for the default runtime TLS pointer; newer Wasmtime
+    /// versions pass 1 for the component-model-async state, so embedders
+    /// sharing an implementation between versions should expect the `slot`
+    /// parameter. No other value of `slot` is passed in.
     ///
-    /// This value should default to `NULL`.
-    pub fn wasmtime_tls_get() -> *mut u8;
+    /// The values should default to `NULL`.
+    pub fn wasmtime_tls_get(slot: usize) -> *mut u8;
 
-    /// Sets the current TLS value for Wasmtime to the provided value.
-    ///
-    /// This value should be returned when later calling `wasmtime_tls_get`.
-    pub fn wasmtime_tls_set(ptr: *mut u8);
+    /// Setter for the TLS space described in `wasmtime_tls_get`.
+    pub fn wasmtime_tls_set(slot: usize, ptr: *mut u8);
 
     /// Frees a synchronization lock.
     ///

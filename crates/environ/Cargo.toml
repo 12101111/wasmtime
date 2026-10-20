@@ -41,7 +41,6 @@ wasmtime-core = { workspace = true, features = ['serde'] }
 semver = { workspace = true, optional = true, features = ['serde'] }
 smallvec = { workspace = true, features = ['serde'] }
 sha2 = { workspace = true }
-wa2x-testabi = { workspace = true, optional = true }
 
 [dev-dependencies]
 clap = { workspace = true, features = ['default'] }
@@ -97,4 +96,4 @@ std = [
 rr = [
   "component-model"
 ]
-profiler = ["dep:wa2x-testabi", "compile"]
+profiler = ["compile"]

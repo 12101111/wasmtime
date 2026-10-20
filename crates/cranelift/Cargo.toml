@@ -34,8 +34,6 @@ itertools = { workspace = true }
 pulley-interpreter = { workspace = true, optional = true }
 wasmtime-core = { workspace = true }
 wasmtime-unwinder = { workspace = true, features = ["cranelift"] }
-wa2x-testabi = { workspace = true, optional = true }
-postcard = { workspace = true, optional = true }
 
 [features]
 all-arch = ["cranelift-codegen/all-arch"]
@@ -50,4 +48,4 @@ gc-drc = ["gc", "wasmtime-environ/gc-drc"]
 gc-null = ["gc", "wasmtime-environ/gc-null"]
 stack-switching = []
 threads = ["wasmtime-environ/threads"]
-profiler = ["wasmtime-environ/profiler", "dep:wa2x-testabi", "dep:postcard"]
+profiler = ["wasmtime-environ/profiler"]

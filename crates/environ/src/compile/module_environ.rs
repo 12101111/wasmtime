@@ -4,6 +4,8 @@ use crate::module::{
     TableSegmentElements,
 };
 use crate::prelude::*;
+#[cfg(feature = "profiler")]
+use crate::profile::ProfileInfo;
 use crate::{
     ConstExpr, ConstOp, DataIndex, DefinedFuncIndex, ElemIndex, EngineOrModuleTypeIndex,
     EntityIndex, EntityType, FuncIndex, FuncKey, GlobalIndex, IndexType, InitMemory, MemoryIndex,
@@ -14,8 +16,6 @@ use crate::{
 };
 use cranelift_entity::SecondaryMap;
 use cranelift_entity::packed_option::ReservedValue;
-#[cfg(feature = "profiler")]
-use wa2x_testabi::ProfileInfo;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
