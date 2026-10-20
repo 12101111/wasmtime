@@ -155,6 +155,10 @@ where
     pub(crate) subsume_values: FxHashSet<Value>,
     optimized_values: SmallVec<[Value; MATCHES_LIMIT]>,
     optimized_insts: SmallVec<[SkeletonInstSimplification; MATCHES_LIMIT]>,
+    /// The instruction currently being rewritten. New instructions created by
+    /// rewrite rules inherit its source location, so that debug info and
+    /// profile instrumentation keep pointing at the original wasm operator.
+    pub(crate) cur_inst: Option<Inst>,
 }
 
 /// For passing to `insert_pure_enode`. Sometimes the enode already
@@ -234,6 +238,18 @@ where
                     let inst = self.func.dfg.make_inst(data);
                     // TODO: reuse return value?
                     self.func.dfg.make_inst_results(inst, typevar);
+                    // Rewrite rules have no source location of their own; give
+                    // the new instruction the location of the instruction that
+                    // is being rewritten so debug info and profile
+                    // instrumentation stay attached to the original operator.
+                    if let Some(cur) = self.cur_inst {
+                        let srcloc = self.func.srcloc(cur);
+                        // Don't record the "no source location" sentinel as the
+                        // function's base source location.
+                        if !srcloc.is_default() {
+                            self.func.set_srcloc(inst, srcloc);
+                        }
+                    }
                     let result = self.func.dfg.first_result(inst);
                     // New inst. We need to do the analysis of its result.
                     (inst, result, typevar)
@@ -368,6 +384,13 @@ where
         ctx.rewrite_depth += 1;
         trace!("Incrementing rewrite depth; now {}", ctx.rewrite_depth);
 
+        // New instructions created by the rewrite rules inherit the source
+        // location of the instruction we are rewriting. Restore the previous
+        // value on the way out so nested rewrites do not leak their location
+        // back to the caller.
+        let prev_cur_inst = ctx.cur_inst;
+        ctx.cur_inst = Some(inst);
+
         // Invoke the ISLE toplevel constructor, getting all new
         // values produced as equivalents to this value.
         trace!("Calling into ISLE with original value {}", orig_value);
@@ -443,6 +466,7 @@ where
             union_value
         };
 
+        ctx.cur_inst = prev_cur_inst;
         ctx.rewrite_depth -= 1;
         trace!("Decrementing rewrite depth; now {}", ctx.rewrite_depth);
         if ctx.rewrite_depth == 0 {
@@ -589,11 +613,16 @@ where
         let mut guard = TakeAndReplace::new(self, |x| &mut x.optimized_insts);
         let (ctx, optimized_insts) = guard.get();
 
+        // Skeleton instructions created by the rules inherit the source
+        // location of the instruction they replace.
+        let prev_cur_inst = ctx.cur_inst;
+        ctx.cur_inst = Some(inst);
         crate::opts::generated_code::constructor_simplify_skeleton(
             &mut IsleContext { ctx },
             inst,
             optimized_insts,
         );
+        ctx.cur_inst = prev_cur_inst;
 
         let simplifications_len = optimized_insts.len();
         log::trace!(" -> simplify_skeleton: yielded {simplifications_len} simplification(s)");
@@ -921,6 +950,7 @@ impl<'a> EgraphPass<'a> {
                     ctrl_plane: self.ctrl_plane,
                     optimized_values: Default::default(),
                     optimized_insts: Default::default(),
+                    cur_inst: None,
                 };
 
                 if is_pure_for_egraph(ctx.func, inst) {

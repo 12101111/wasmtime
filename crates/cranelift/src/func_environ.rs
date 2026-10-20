@@ -6160,7 +6160,10 @@ impl FuncEnvironment<'_> {
         rhs: ir::Value,
     ) -> ir::Value {
         self.guard_signed_divide(builder, lhs, rhs);
-        builder.ins().sdiv(lhs, rhs)
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().sdiv(lhs, rhs);
+        append_profile_default_inst!(self, builder);
+        result
     }
 
     pub fn translate_udiv(
@@ -6170,7 +6173,10 @@ impl FuncEnvironment<'_> {
         rhs: ir::Value,
     ) -> ir::Value {
         self.guard_zero_divisor(builder, rhs);
-        builder.ins().udiv(lhs, rhs)
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().udiv(lhs, rhs);
+        append_profile_default_inst!(self, builder);
+        result
     }
 
     pub fn translate_srem(
@@ -6180,7 +6186,10 @@ impl FuncEnvironment<'_> {
         rhs: ir::Value,
     ) -> ir::Value {
         self.guard_zero_divisor(builder, rhs);
-        builder.ins().srem(lhs, rhs)
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().srem(lhs, rhs);
+        append_profile_default_inst!(self, builder);
+        result
     }
 
     pub fn translate_urem(
@@ -6190,7 +6199,10 @@ impl FuncEnvironment<'_> {
         rhs: ir::Value,
     ) -> ir::Value {
         self.guard_zero_divisor(builder, rhs);
-        builder.ins().urem(lhs, rhs)
+        append_profile_inst!(self, builder, Branch);
+        let result = builder.ins().urem(lhs, rhs);
+        append_profile_default_inst!(self, builder);
+        result
     }
 
     pub fn translate_fcvt_to_sint(

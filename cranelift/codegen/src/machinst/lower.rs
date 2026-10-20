@@ -205,7 +205,16 @@ pub struct Lower<'func, I: VCodeInst> {
     inst_sunk: FxHashSet<Inst>,
 
     /// Instructions collected for the CLIF inst in progress, in forward order.
-    ir_insts: Vec<I>,
+    ///
+    /// Each instruction carries an optional source location overriding the
+    /// location of the CLIF instruction currently being lowered; see
+    /// [`Lower::set_next_inst_srcloc`].
+    ir_insts: Vec<(I, Option<RelSourceLoc>)>,
+
+    /// Source location to attach to the next machine instruction emitted by
+    /// [`Lower::emit`], instead of the location of the CLIF instruction being
+    /// lowered. See [`Lower::set_next_inst_srcloc`].
+    next_inst_srcloc: Option<RelSourceLoc>,
 
     /// Try-call block arg normal-return values, indexed by instruction.
     try_call_rets: FxHashMap<Inst, SmallVec<[ValueRegs<Writable<Reg>>; 2]>>,
@@ -507,6 +516,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             cur_scan_entry_color: None,
             cur_inst: None,
             ir_insts: vec![],
+            next_inst_srcloc: None,
             try_call_rets,
             try_call_payloads,
             pinned_reg: None,
@@ -983,9 +993,13 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         // The VCodeBuilder builds in reverse order (and reverses at
         // the end), but `ir_insts` is in forward order, so reverse
         // it.
-        for inst in self.ir_insts.drain(..).rev() {
-            self.vcode.push(inst, loc);
+        for (inst, override_loc) in self.ir_insts.drain(..).rev() {
+            self.vcode.push(inst, override_loc.unwrap_or(loc));
         }
+        // An override that was never consumed (because no instruction was
+        // emitted after it was set) must not leak into the next CLIF
+        // instruction.
+        self.next_inst_srcloc = None;
     }
 
     fn finish_bb(&mut self) {
@@ -1663,7 +1677,28 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
     /// Emit a machine instruction.
     pub fn emit(&mut self, mach_inst: I) {
         trace!("emit: {:?}", mach_inst);
-        self.ir_insts.push(mach_inst);
+        let srcloc = self.next_inst_srcloc.take();
+        self.ir_insts.push((mach_inst, srcloc));
+    }
+
+    /// Attach the source location of `ir_inst` to the next machine instruction
+    /// emitted through [`Lower::emit`], instead of the source location of the
+    /// CLIF instruction currently being lowered.
+    ///
+    /// Backends use this when an instruction is folded into a machine
+    /// instruction of another CLIF instruction (for example a `load` whose
+    /// memory operand becomes part of an ALU instruction): the resulting memory
+    /// access must keep the position of the `load` it implements, otherwise
+    /// profile events and debug stepping would attribute it to the consumer.
+    ///
+    /// The override only applies to the instruction emitted immediately
+    /// afterwards; it is dropped at the end of the current CLIF instruction if
+    /// no instruction is emitted.
+    pub fn set_next_inst_srcloc(&mut self, ir_inst: Inst) {
+        let srcloc = self.srcloc(ir_inst);
+        if !srcloc.is_default() {
+            self.next_inst_srcloc = Some(srcloc);
+        }
     }
 
     /// Indicate that the side-effect of an instruction has been sunk to the
