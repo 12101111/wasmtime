@@ -712,6 +712,12 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
     fn sink_load(&mut self, load: &SinkableLoad) -> SyntheticAmode {
         self.lower_ctx.sink_inst(load.inst);
         let addr = lower_to_amode(self.lower_ctx, load.addr_input, load.offset);
+        // The load has no machine instruction of its own anymore: it is folded
+        // into the memory operand of the instruction that is emitted next. Give
+        // that instruction the source location of the load (instead of the one
+        // of the consumer), so the emitted memory access keeps pointing at the
+        // operator and instruction that actually performs it.
+        self.lower_ctx.set_next_inst_srcloc(load.inst);
         SyntheticAmode::Real(addr)
     }
 
