@@ -375,6 +375,9 @@ impl Context {
         let fisa = fisa.into();
         self.compute_loop_analysis();
         let mut alias_analysis = AliasAnalysis::new(&self.func, &self.domtree);
+        // Honor `enable_alias_analysis` again. Upstream stopped consulting this setting 
+        // when the non-egraph pipeline was removed (wasmtime #6167), which made it a silent no-op.
+        alias_analysis.set_disabled(!fisa.flags.enable_alias_analysis());
         let mut pass = EgraphPass::new(
             &mut self.func,
             &self.domtree,
