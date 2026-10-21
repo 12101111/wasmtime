@@ -216,6 +216,9 @@ pub struct AliasAnalysis<'a> {
     ///
     /// We keep the defining inst around for quick dominance checks.
     mem_values: FxHashMap<MemoryLoc, (Inst, Value)>,
+
+    /// when set, this pass performs no optimizations at all
+    disabled: bool,
 }
 
 impl<'a> AliasAnalysis<'a> {
@@ -226,10 +229,16 @@ impl<'a> AliasAnalysis<'a> {
             domtree,
             block_input: FxHashMap::default(),
             mem_values: FxHashMap::default(),
+            disabled: false,
         };
 
         analysis.compute_block_input_states(func);
         analysis
+    }
+
+    /// Disable all alias-analysis-based optimizations in this pass.
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
     }
 
     fn compute_block_input_states(&mut self, func: &Function) {
@@ -296,6 +305,10 @@ impl<'a> AliasAnalysis<'a> {
         state: &mut LastStores,
         inst: Inst,
     ) -> OptResult {
+        if self.disabled {
+            return OptResult::None;
+        }
+
         trace!(
             "alias analysis: scanning at inst{} with state {:?} ({:?})",
             inst.index(),
