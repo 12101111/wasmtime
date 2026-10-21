@@ -64,6 +64,7 @@ pub(crate) mod types;
 pub(crate) mod v128;
 pub(crate) mod values;
 pub(crate) mod vm;
+pub use vm::{Instance as VMInstance, VMContext, VMFuncRef};
 
 #[cfg(feature = "component-model")]
 pub mod component;

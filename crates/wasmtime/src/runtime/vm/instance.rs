@@ -287,7 +287,7 @@ impl Instance {
     /// These place further restrictions on the API signature to satisfy some of
     /// the above points.
     #[inline]
-    pub(crate) unsafe fn from_vmctx(vmctx: NonNull<VMContext>) -> NonNull<Instance> {
+    pub unsafe fn from_vmctx(vmctx: NonNull<VMContext>) -> NonNull<Instance> {
         // SAFETY: The validity of `byte_sub` relies on `vmctx` being a valid
         // allocation.
         unsafe {
@@ -411,8 +411,9 @@ impl Instance {
         self.runtime_info.engine_type_index(module_index)
     }
 
+    /// VMOffsets of this Instance
     #[inline]
-    fn offsets(&self) -> &VMOffsets<HostPtr> {
+    pub fn offsets(&self) -> &VMOffsets<HostPtr> {
         self.runtime_info.offsets()
     }
 
@@ -832,7 +833,8 @@ impl Instance {
         Ok(result)
     }
 
-    fn alloc_layout(offsets: &VMOffsets<HostPtr>) -> Layout {
+    /// Layout of Instance plus VMContext of offsets
+    pub fn alloc_layout(offsets: &VMOffsets<HostPtr>) -> Layout {
         let size = mem::size_of::<Self>()
             .checked_add(usize::try_from(offsets.size_of_vmctx()).unwrap())
             .unwrap();
@@ -1034,7 +1036,7 @@ impl Instance {
         &self.memories[index].1
     }
 
-    pub fn get_defined_memory_vmimport(&self, index: DefinedMemoryIndex) -> VMMemoryImport {
+    pub(crate) fn get_defined_memory_vmimport(&self, index: DefinedMemoryIndex) -> VMMemoryImport {
         crate::runtime::vm::VMMemoryImport {
             from: self.memory_ptr(index).into(),
             vmctx: self.vmctx().into(),
