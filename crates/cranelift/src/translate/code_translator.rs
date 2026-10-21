@@ -80,7 +80,7 @@ use crate::translate::translation_utils::{
     block_with_params, blocktype_params_results, f32_translation, f64_translation, set_block_params,
 };
 use crate::trap::TranslateTrap;
-use crate::{MAX_BR_TABLE_TARGETS, Reachability};
+use crate::{MAX_BR_TABLE_TARGETS, Reachability, append_profile_default_inst, append_profile_inst};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::immediates::Offset32;
 use cranelift_codegen::ir::{
@@ -234,7 +234,9 @@ pub fn translate_operator(
                 arg2 = optionally_bitcast_vector(arg2, I8X16, builder);
             }
 
+            append_profile_inst!(environ, builder, Select);
             let val = builder.ins().select(cond, arg1, arg2);
+            append_profile_default_inst!(environ, builder);
 
             // If either of the input types need inclusion in stack maps, then
             // the result will as well.
@@ -281,12 +283,8 @@ pub fn translate_operator(
             let (params, results) = blocktype_params_results(validator, *blockty)?;
             let loop_body = block_with_params(builder, params.clone(), environ)?;
             let next = block_with_params(builder, results.clone(), environ)?;
-            canonicalise_then_jump(
-                environ,
-                builder,
-                loop_body,
-                environ.stacks.peekn(params.len()),
-            );
+            let args = environ.stacks.peekn(params.len()).to_vec();
+            canonicalise_then_jump(environ, builder, loop_body, &args);
             environ
                 .stacks
                 .push_loop(loop_body, next, params.len(), results.len());
@@ -325,15 +323,9 @@ pub fn translate_operator(
                 // up discovering an `else`, then we will allocate a block for it
                 // and go back and patch the jump.
                 let destination = block_with_params(builder, results.clone(), environ)?;
-                let branch_inst = canonicalise_brif(
-                    environ,
-                    builder,
-                    val,
-                    next_block,
-                    &[],
-                    destination,
-                    environ.stacks.peekn(params.len()),
-                );
+                let args = environ.stacks.peekn(params.len()).to_vec();
+                let branch_inst =
+                    canonicalise_brif(environ, builder, val, next_block, &[], destination, &args);
                 (
                     destination,
                     ElseData::NoElse {
@@ -421,12 +413,8 @@ pub fn translate_operator(
                                     blocktype_params_results(validator, blocktype)?;
                                 debug_assert_eq!(params.len(), num_return_values);
                                 let else_block = builder.create_block();
-                                canonicalise_then_jump(
-                                    environ,
-                                    builder,
-                                    destination,
-                                    environ.stacks.peekn(params.len()),
-                                );
+                                let args = environ.stacks.peekn(params.len()).to_vec();
+                                canonicalise_then_jump(environ, builder, destination, &args);
                                 environ.stacks.popn(params.len());
 
                                 builder.change_jump_destination(
@@ -438,12 +426,8 @@ pub fn translate_operator(
                                 else_block
                             }
                             ElseData::WithElse { else_block } => {
-                                canonicalise_then_jump(
-                                    environ,
-                                    builder,
-                                    destination,
-                                    environ.stacks.peekn(num_return_values),
-                                );
+                                let args = environ.stacks.peekn(num_return_values).to_vec();
+                                canonicalise_then_jump(environ, builder, destination, &args);
                                 environ.stacks.popn(num_return_values);
                                 else_block
                             }
@@ -479,12 +463,8 @@ pub fn translate_operator(
             let next_block = frame.following_code();
             let return_count = frame.num_return_values();
 
-            canonicalise_then_jump(
-                environ,
-                builder,
-                next_block,
-                environ.stacks.peekn(return_count),
-            );
+            let return_args = environ.stacks.peekn(return_count).to_vec();
+            canonicalise_then_jump(environ, builder, next_block, &return_args);
             // You might expect that if we just finished an `if` block that
             // didn't have a corresponding `else` block, then we would clean
             // up our duplicate set of parameters that we pushed earlier
@@ -542,12 +522,8 @@ pub fn translate_operator(
                 };
                 (return_count, frame.br_destination())
             };
-            canonicalise_then_jump(
-                environ,
-                builder,
-                br_destination,
-                environ.stacks.peekn(return_count),
-            );
+            let destination_args = environ.stacks.peekn(return_count).to_vec();
+            canonicalise_then_jump(environ, builder, br_destination, &destination_args);
             environ.stacks.popn(return_count);
             environ.stacks.reachable = false;
         }
@@ -592,7 +568,7 @@ pub fn translate_operator(
                 };
                 let block = builder.func.dfg.block_call(block, &[]);
                 let jt = builder.create_jump_table(JumpTableData::new(block, &data));
-                builder.ins().br_table(val, jt);
+                environ.build_br_table(builder, val, jt);
             } else {
                 // Here we have jump arguments, but Cranelift's br_table doesn't support them
                 // We then proceed to split the edges going out of the br_table
@@ -621,7 +597,7 @@ pub fn translate_operator(
                 };
                 let default_branch_block = builder.func.dfg.block_call(default_branch_block, &[]);
                 let jt = builder.create_jump_table(JumpTableData::new(default_branch_block, &data));
-                builder.ins().br_table(val, jt);
+                environ.build_br_table(builder, val, jt);
                 for (depth, dest_block) in dest_block_sequence {
                     builder.switch_to_block(dest_block);
                     builder.seal_block(dest_block);
@@ -631,12 +607,8 @@ pub fn translate_operator(
                         frame.set_branched_to_exit();
                         frame.br_destination()
                     };
-                    canonicalise_then_jump(
-                        environ,
-                        builder,
-                        real_dest_block,
-                        environ.stacks.peekn(return_count),
-                    );
+                    let args = environ.stacks.peekn(return_count).to_vec();
+                    canonicalise_then_jump(environ, builder, real_dest_block, &args);
                 }
                 environ.stacks.popn(return_count);
             }
@@ -651,7 +623,7 @@ pub fn translate_operator(
                 let mut return_args = environ.stacks.peekn(return_count).to_vec();
                 environ.handle_before_return(&return_args, builder);
                 bitcast_wasm_returns(&mut return_args, builder);
-                builder.ins().return_(&return_args);
+                environ.build_return(builder, &return_args);
             }
             environ.stacks.popn(return_count);
             environ.stacks.reachable = false;
@@ -673,7 +645,7 @@ pub fn translate_operator(
             let body = builder.create_block();
             let (params, results) = blocktype_params_results(validator, try_table.ty)?;
             let next = block_with_params(builder, results.clone(), environ)?;
-            builder.ins().jump(body, []);
+            environ.build_jump(builder, body, &[]);
             builder.seal_block(body);
 
             // For each catch clause, create a block with the
@@ -1193,27 +1165,35 @@ pub fn translate_operator(
         }
         Operator::I64TruncSatF64S | Operator::I64TruncSatF32S => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_sint_sat(I64, val));
+            // Saturating conversions are expanded by the backend into compares
+            // and conditional branches that clamp to the saturated result.
+            // Register the expansion in the profile so that this generated
+            // control flow has an instruction-level position.
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_sint_sat(I64, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I32TruncSatF64S | Operator::I32TruncSatF32S => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_sint_sat(I32, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_sint_sat(I32, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I64TruncSatF64U | Operator::I64TruncSatF32U => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_uint_sat(I64, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_uint_sat(I64, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::I32TruncSatF64U | Operator::I32TruncSatF32U => {
             let val = environ.stacks.pop1();
-            environ
-                .stacks
-                .push1(builder.ins().fcvt_to_uint_sat(I32, val));
+            append_profile_inst!(environ, builder, Branch);
+            let result = builder.ins().fcvt_to_uint_sat(I32, val);
+            append_profile_default_inst!(environ, builder);
+            environ.stacks.push1(result);
         }
         Operator::F32ReinterpretI32 => {
             let val = environ.stacks.pop1();
@@ -3842,11 +3822,13 @@ fn translate_load(
 
     environ.before_load(builder, mem_op_size, wasm_index, memarg.offset);
 
+    append_profile_inst!(environ, builder, Load);
     let flags = builder.func.dfg.mem_flags.insert(flags).unwrap();
     let (load, dfg) = builder
         .ins()
         .Load(opcode, result_ty, flags, Offset32::new(0), base);
     environ.stacks.push1(dfg.first_result(load));
+    append_profile_default_inst!(environ, builder);
     Ok(Reachability::Reachable(()))
 }
 
@@ -3868,10 +3850,12 @@ fn translate_store(
 
     environ.before_store(builder, mem_op_size, wasm_index, memarg.offset);
 
+    append_profile_inst!(environ, builder, Store);
     let flags = builder.func.dfg.mem_flags.insert(flags).unwrap();
     builder
         .ins()
         .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
+    append_profile_default_inst!(environ, builder);
     Ok(())
 }
 
@@ -4463,7 +4447,7 @@ fn push_block_params(
 /// don't have that type.  This is done in somewhat roundabout way so as to ensure that we
 /// almost never have to do any heap allocation.
 fn canonicalise_then_jump(
-    environ: &FuncEnvironment<'_>,
+    environ: &mut FuncEnvironment<'_>,
     builder: &mut FunctionBuilder,
     destination: ir::Block,
     params: &[ir::Value],
@@ -4471,12 +4455,12 @@ fn canonicalise_then_jump(
     let mut canonicalised = SmallVec::<[_; 16]>::new();
     let canonicalised = canonicalise_v128_values(&mut canonicalised, builder, params);
     set_block_params(environ, builder, destination, canonicalised);
-    builder.ins().jump(destination, &[])
+    environ.build_jump(builder, destination, &[])
 }
 
 /// The same as `canonicalise_then_jump` but for a `brif` instruction.
 fn canonicalise_brif(
-    environ: &FuncEnvironment<'_>,
+    environ: &mut FuncEnvironment<'_>,
     builder: &mut FunctionBuilder,
     cond: ir::Value,
     block_then: ir::Block,
@@ -4494,7 +4478,7 @@ fn canonicalise_brif(
         canonicalise_v128_values(&mut canonicalised_else, builder, params_else);
     set_block_params(environ, builder, block_else, canonicalised_else);
 
-    builder.ins().brif(cond, block_then, &[], block_else, &[])
+    environ.build_brif(builder, cond, block_then, &[], block_else, &[])
 }
 
 /// A helper for popping and bitcasting a single value; since SIMD values can lose their type by

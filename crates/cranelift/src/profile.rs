@@ -5,7 +5,11 @@
 //! and machine code, using DWARF debug information.
 
 use cranelift_codegen::ir::SourceLoc;
-use wasmtime_environ::profile::{FuncProfileInfo, OpProfileInfo};
+use wasmtime_environ::profile::{
+    FuncProfileInfo, InstInfo, InstKind, OpProfileInfo, map_wasmtime_file,
+};
+
+use crate::ProfileBuilder;
 
 mod operator;
 pub use operator::OperatorKind;
@@ -63,6 +67,37 @@ impl ProfileState {
             pos,
             insts: vec![],
         });
+    }
+
+    /// Append an instruction to the current operator and set the builder's srcloc to the current loc.
+    #[track_caller]
+    pub fn append_profile_inst<B: ProfileBuilder>(&mut self, builder: &mut B, kind: InstKind) {
+        let loc = std::panic::Location::caller();
+        let file = map_wasmtime_file(loc.file());
+        let loc = loc.line().try_into().unwrap();
+        let info = InstInfo {
+            kind: kind as u8,
+            file,
+            loc,
+        };
+        let insts = &mut self.info.ops.last_mut().expect("no op").insts;
+        insts.push(info);
+        let column = insts.len().try_into().unwrap();
+        if let Some(loc) = encode_srcloc(self.current_line(), column) {
+            builder.set_srcloc(loc);
+        } else {
+            panic!("encode error: {:?}", self.info)
+        }
+    }
+
+    /// Reset the builder's srcloc to column 0.
+    #[cfg(feature = "profiler")]
+    pub fn append_profile_default_inst<B: crate::ProfileBuilder>(&self, builder: &mut B) {
+        if let Some(loc) = encode_srcloc(self.current_line(), 0) {
+            builder.set_srcloc(loc);
+        } else {
+            panic!("encode error: {:?}", self.info)
+        }
     }
 
     /// Get the current line number.

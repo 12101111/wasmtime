@@ -33,6 +33,52 @@ where
         vec![]
     }
 
+    fn builder_trap(&mut self, builder: &mut FunctionBuilder, trap: ir::TrapCode) {
+        builder.ins().trap(trap);
+    }
+
+    fn builder_trapz(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        value: ir::Value,
+        trap: ir::TrapCode,
+    ) {
+        builder.ins().trapz(value, trap);
+    }
+
+    fn builder_trapnz(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        value: ir::Value,
+        trap: ir::TrapCode,
+    ) {
+        builder.ins().trapnz(value, trap);
+    }
+
+    fn builder_brif<'a>(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        cond: ir::Value,
+        block_then: ir::Block,
+        args_then: impl IntoIterator<Item = &'a ir::BlockArg>,
+        block_else: ir::Block,
+        args_else: impl IntoIterator<Item = &'a ir::BlockArg>,
+    ) -> ir::Inst {
+        builder
+            .ins()
+            .brif(cond, block_then, args_then, block_else, args_else)
+    }
+
+    fn builder_call(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        callee: ir::FuncRef,
+        args: &[ir::Value],
+    ) -> ir::Inst {
+        builder.ins().call(callee, args)
+    }
+
+    #[track_caller]
     fn trap(&mut self, builder: &mut FunctionBuilder, trap: ir::TrapCode) {
         match (
             self.clif_instruction_traps_enabled(),
@@ -41,7 +87,7 @@ where
             // If libcall traps are disabled or there's no wasmtime-defined trap
             // code for this, then emit a native trap instruction.
             (true, _) | (_, None) => {
-                builder.ins().trap(trap);
+                self.builder_trap(builder, trap);
             }
             // ... otherwise with libcall traps explicitly enabled and a
             // wasmtime-based trap code invoke the libcall to raise a trap and
@@ -52,18 +98,19 @@ where
                 let trap_libcall = self.builtin_funcref(builder, BuiltinFunctionIndex::trap());
                 let vmctx = self.vmctx_val(&mut builder.cursor());
                 let trap_code = builder.ins().iconst(I8, i64::from(trap.as_u8()));
-                builder.ins().call(trap_libcall, &[vmctx, trap_code]);
+                self.builder_call(builder, trap_libcall, &[vmctx, trap_code]);
                 let raise_libcall = self.builtin_funcref(builder, BuiltinFunctionIndex::raise());
-                let inst = builder.ins().call(raise_libcall, &[vmctx]);
+                let inst = self.builder_call(builder, raise_libcall, &[vmctx]);
                 builder.func.debug_tags.set(inst, debug_tags);
-                builder.ins().trap(TRAP_INTERNAL_ASSERT);
+                self.builder_trap(builder, TRAP_INTERNAL_ASSERT);
             }
         }
     }
 
+    #[track_caller]
     fn trapz(&mut self, builder: &mut FunctionBuilder, value: ir::Value, trap: ir::TrapCode) {
         if self.clif_instruction_traps_enabled() {
-            builder.ins().trapz(value, trap);
+            self.builder_trapz(builder, value, trap);
         } else {
             let ty = builder.func.dfg.value_type(value);
             let zero = builder.ins().iconst(ty, 0);
@@ -72,9 +119,10 @@ where
         }
     }
 
+    #[track_caller]
     fn trapnz(&mut self, builder: &mut FunctionBuilder, value: ir::Value, trap: ir::TrapCode) {
         if self.clif_instruction_traps_enabled() {
-            builder.ins().trapnz(value, trap);
+            self.builder_trapnz(builder, value, trap);
         } else {
             let ty = builder.func.dfg.value_type(value);
             let zero = builder.ins().iconst(ty, 0);
@@ -83,6 +131,7 @@ where
         }
     }
 
+    #[track_caller]
     fn uadd_overflow_trap(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -103,6 +152,7 @@ where
     ///
     /// This should only be used if `self.clif_instruction_traps_enabled()` is
     /// false, otherwise native CLIF instructions should be used instead.
+    #[track_caller]
     fn conditionally_trap(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -115,9 +165,7 @@ where
         builder.set_cold_block(trap_block);
         let continuation_block = builder.create_block();
 
-        builder
-            .ins()
-            .brif(trap_cond, trap_block, &[], continuation_block, &[]);
+        self.builder_brif(builder, trap_cond, trap_block, &[], continuation_block, &[]);
 
         builder.seal_block(trap_block);
         builder.seal_block(continuation_block);

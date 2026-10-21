@@ -358,10 +358,8 @@ fn parse_function_body(
         }
         #[cfg(feature = "profiler")]
         if environ.tunables().enable_profile {
-            environ.append_profile_opkind((&op).into(), pos.try_into().unwrap());
-            let srcloc = environ.profile.as_ref().unwrap().current_srcloc();
-            builder.set_srcloc(srcloc);
-            environ.next_srcloc = srcloc;
+            environ.append_profile_opkind(builder, (&op).into(), pos.try_into().unwrap());
+            environ.next_srcloc = environ.profile.as_ref().unwrap().current_srcloc();
         }
         let operand_types =
             validate_op_and_get_operand_types(validator, environ, &mut operand_types, &op, pos)?;
@@ -384,7 +382,11 @@ fn parse_function_body(
             let mut returns = core::mem::take(&mut environ.stacks.stack);
             environ.handle_before_return(&returns, builder);
             bitcast_wasm_returns(&mut returns, builder);
-            builder.ins().return_(&returns);
+            // Use the profiled wrapper: the machine code implementing this
+            // implicit return (the epilogue) otherwise only gets the `End`
+            // operator's `(line, 0)` source location, so every return is
+            // attributed to an instruction-less operator.
+            environ.build_return(builder, &returns);
         }
     }
 
