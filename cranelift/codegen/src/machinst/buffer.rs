@@ -1558,6 +1558,31 @@ impl<I: VCodeInst> MachBuffer<I> {
         }
     }
 
+    /// Return the source location covering the code at `offset`, if any.
+    ///
+    /// This is used for code that is generated after the fact and reused for
+    /// another instruction, such as a veneer emitted in an island for a branch
+    /// that cannot reach its target.
+    fn srcloc_at(&self, offset: CodeOffset) -> Option<RelSourceLoc> {
+        // `srclocs` holds the segments that have been closed so far, in
+        // increasing order, so the candidate segment is the last one that
+        // starts at or before `offset`.
+        let idx = self.srclocs.partition_point(|range| range.start <= offset);
+        if idx > 0 {
+            let range = &self.srclocs[idx - 1];
+            if offset < range.end {
+                return Some(range.loc);
+            }
+        }
+        // Fall back to the segment that is currently open, if any.
+        if let Some((start, loc)) = self.cur_srcloc {
+            if start <= offset && offset < self.cur_offset() {
+                return Some(loc);
+            }
+        }
+        None
+    }
+
     /// Emits a "veneer" the `kind` code at `offset` to jump to `label`.
     ///
     /// This will generate extra machine code, using `kind`, to get a
@@ -1585,10 +1610,22 @@ impl<I: VCodeInst> MachBuffer<I> {
             offset, veneer_offset
         );
         kind.patch(slice, offset, veneer_offset);
+        // The veneer implements a jump that the instruction at `offset` could
+        // not encode itself. Attribute the emitted code to that instruction:
+        // islands are otherwise emitted without source location, which makes
+        // the veneer look like code of whatever instruction happened to be
+        // emitted last (or as code without any location at all).
+        let veneer_loc = self.srcloc_at(offset);
+        if let Some(loc) = veneer_loc {
+            self.start_srcloc(loc);
+        }
         // Generate the veneer.
         let veneer_slice = self.get_appended_space(kind.veneer_size() as usize);
         let (veneer_fixup_off, veneer_label_use) =
             kind.generate_veneer(veneer_slice, veneer_offset);
+        if veneer_loc.is_some() {
+            self.end_srcloc();
+        }
         trace!(
             "generated veneer; fixup offset {}, label_use {:?}",
             veneer_fixup_off, veneer_label_use

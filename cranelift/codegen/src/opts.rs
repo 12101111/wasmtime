@@ -231,6 +231,16 @@ impl<'a, 'b, 'c> generated_code::Context for IsleContext<'a, 'b, 'c> {
             .func
             .dfg
             .make_inst_results(inst, Default::default());
+        // Skeleton instructions replace the instruction currently being
+        // simplified, so they inherit its source location.
+        if let Some(cur) = self.ctx.cur_inst {
+            let srcloc = self.ctx.func.srcloc(cur);
+            // Don't record the "no source location" sentinel as the function's
+            // base source location.
+            if !srcloc.is_default() {
+                self.ctx.func.set_srcloc(inst, srcloc);
+            }
+        }
         inst
     }
 
