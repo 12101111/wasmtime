@@ -8,8 +8,8 @@ use wasmtime_cranelift::CompiledFunction;
 use wasmtime_environ::component::ComponentTranslation;
 use wasmtime_environ::error::Result;
 use wasmtime_environ::{
-    CompileError, CompiledFunctionBody, DefinedFuncIndex, FuncKey, FunctionBodyData, FunctionLoc,
-    ModuleTranslation, ModuleTypesBuilder, PrimaryMap, StaticModuleIndex, Tunables, VMOffsets,
+    CompileError, CompiledFunctionBody, FuncKey, FunctionBodyData, FunctionLoc, ModuleTranslation,
+    ModuleTypesBuilder, PrimaryMap, StaticModuleIndex, Tunables, VMOffsets,
 };
 use winch_codegen::{BuiltinFunctions, CallingConvention, TargetIsa};
 
@@ -162,6 +162,8 @@ impl wasmtime_environ::Compiler for Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiled_function(func),
             needs_gc_heap,
+            #[cfg(feature = "profiler")]
+            profile: None,
         })
     }
 
@@ -209,10 +211,7 @@ impl wasmtime_environ::Compiler for Compiler {
         &self,
         _obj: &mut Object<'_>,
         _translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        _get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (Option<SymbolId>, &'a (dyn Any + Send + Sync)),
+        _get_func: &'a dyn Fn(FuncKey) -> Option<(Option<SymbolId>, &'a (dyn Any + Send + Sync))>,
         _dwarf_package_bytes: Option<&'a [u8]>,
         _tunables: &'a Tunables,
     ) -> Result<()> {
@@ -318,10 +317,7 @@ impl wasmtime_environ::Compiler for NoInlineCompiler {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (Option<SymbolId>, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(Option<SymbolId>, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()> {

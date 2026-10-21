@@ -430,6 +430,13 @@ impl Config {
         self
     }
 
+    /// Configures whether DWARF based profiler is enable and
+    /// Wa2x profile info will be emitted.
+    pub fn enable_profile(&mut self, enable: bool) -> &mut Self {
+        self.tunables.enable_profile = Some(enable);
+        self
+    }
+
     /// Configures whether DWARF debug information will be emitted
     /// during compilation for a native debugger on the Wasmtime
     /// process to consume.

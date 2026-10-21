@@ -70,7 +70,27 @@ impl FuncTranslator {
 
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
         builder.make_stack_map_alias_region(Box::new(AliasRegions::<u8>::stack_map_region));
-        builder.set_srcloc(cur_srcloc(&reader));
+        #[cfg(feature = "profiler")]
+        let skip_srcloc = environ.tunables().enable_profile;
+        #[cfg(not(feature = "profiler"))]
+        let skip_srcloc = false;
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(&reader));
+        }
+        // Initialize profile state for this function, if profiling is enabled.
+        #[cfg(feature = "profiler")]
+        if environ.tunables().enable_profile {
+            use crate::profile::ProfileState;
+
+            let func_name = format!("{}", builder.func.name);
+            let profile =
+                ProfileState::new(func_name, reader.current_position().try_into().unwrap());
+            builder
+                .func
+                .params
+                .ensure_base_srcloc(profile.current_srcloc());
+            environ.profile = Some(profile);
+        }
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -131,6 +151,17 @@ impl FuncTranslator {
     ) -> WasmResult<()> {
         let mut builder = FunctionBuilder::new(func, &mut self.func_ctx);
         builder.make_stack_map_alias_region(Box::new(AliasRegions::<u8>::stack_map_region));
+        // When profiling, the whole synthesized startup function is mapped to
+        // its single `InitFunc` profile line: use the base srcloc installed by
+        // the caller (`compile_module_startup`) as the builder's srcloc so
+        // that every instruction emitted below resolves to that line.
+        #[cfg(feature = "profiler")]
+        if environ.tunables().enable_profile {
+            let base = builder.func.params.base_srcloc();
+            if !base.is_default() {
+                builder.set_srcloc(base);
+            }
+        }
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -202,8 +233,14 @@ fn parse_local_decls(
     let mut next_local = num_params;
     let local_count = reader.read_var_u32()?;
 
+    #[cfg(feature = "profiler")]
+    let skip_srcloc = environ.tunables().enable_profile;
+    #[cfg(not(feature = "profiler"))]
+    let skip_srcloc = false;
     for _ in 0..local_count {
-        builder.set_srcloc(cur_srcloc(reader));
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(reader));
+        }
         let pos = reader.original_position();
         let count = reader.read_var_u32()?;
         let ty = reader.read()?;
@@ -305,12 +342,27 @@ fn parse_function_body(
     let mut reader = OperatorsReader::new(reader);
     let mut operand_types = vec![];
 
+    #[cfg(feature = "profiler")]
+    let skip_srcloc = environ.tunables().enable_profile;
+    #[cfg(not(feature = "profiler"))]
+    let skip_srcloc = false;
     while !reader.eof() {
         let pos = reader.original_position();
-        builder.set_srcloc(cur_srcloc(&reader.get_binary_reader()));
+        if !skip_srcloc {
+            builder.set_srcloc(cur_srcloc(&reader.get_binary_reader()));
+        }
 
         let op = reader.read()?;
-        environ.next_srcloc = cur_srcloc(&reader.get_binary_reader());
+        if !skip_srcloc {
+            environ.next_srcloc = cur_srcloc(&reader.get_binary_reader());
+        }
+        #[cfg(feature = "profiler")]
+        if environ.tunables().enable_profile {
+            environ.append_profile_opkind((&op).into(), pos.try_into().unwrap());
+            let srcloc = environ.profile.as_ref().unwrap().current_srcloc();
+            builder.set_srcloc(srcloc);
+            environ.next_srcloc = srcloc;
+        }
         let operand_types =
             validate_op_and_get_operand_types(validator, environ, &mut operand_types, &op, pos)?;
 

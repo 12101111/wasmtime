@@ -34,6 +34,8 @@ mod module;
 mod module_artifacts;
 mod module_types;
 pub mod obj;
+#[cfg(feature = "profiler")]
+pub mod profile;
 mod ref_bits;
 mod scopevec;
 mod stack_map;

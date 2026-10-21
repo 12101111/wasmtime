@@ -213,6 +213,14 @@ pub struct ModuleTranslation<'data> {
     /// DWARF debug information, if enabled, parsed from the module.
     pub debuginfo: DebugInfoData<'data>,
 
+    /// Module level profiler state for virtual source code mapping.
+    #[cfg(feature = "profiler")]
+    pub profile: Option<crate::profile::ProfileInfo>,
+
+    /// Line offsets for each function within the module's virtual source code.
+    #[cfg(feature = "profiler")]
+    pub line_offsets: HashMap<FuncKey, u32>,
+
     /// Set if debuginfo was found but it was not parsed due to `Tunables`
     /// configuration.
     pub has_unparsed_debuginfo: bool,
@@ -335,6 +343,10 @@ impl<'data> ModuleTranslation<'data> {
             tables_known_to_importers: EntitySet::new(),
             exported_signatures: Vec::default(),
             debuginfo: DebugInfoData::default(),
+            #[cfg(feature = "profiler")]
+            profile: None,
+            #[cfg(feature = "profiler")]
+            line_offsets: HashMap::new(),
             has_unparsed_debuginfo: false,
             data_align: None,
             runtime_data: Default::default(),

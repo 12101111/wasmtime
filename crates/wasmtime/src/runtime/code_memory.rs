@@ -231,6 +231,10 @@ impl CodeMemory {
                 "" | ".symtab" | ".strtab" | ".shstrtab" | ".xdata" | obj::ELF_WASM_ENGINE => {
                     log::debug!("ignoring section {name:?}")
                 }
+                // Only consumed by external profiling tools; not needed at runtime.
+                obj::ELF_WASMTIME_PROFILE => {
+                    log::debug!("ignoring profile section {name:?}")
+                }
                 _ if name.starts_with(".debug_") || name.starts_with(".rela.debug_") => {
                     log::debug!("ignoring debug section {name:?}")
                 }

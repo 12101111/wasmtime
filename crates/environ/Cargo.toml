@@ -99,3 +99,4 @@ rr = [
   "component-model",
   "dep:sha2",
 ]
+profiler = ["compile"]

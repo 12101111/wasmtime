@@ -15,7 +15,7 @@ use cranelift_codegen::isa::TargetIsa;
 use object::write::SymbolId;
 use std::collections::HashMap;
 use wasmtime_environ::{
-    DefinedFuncIndex, DefinedMemoryIndex, EntityRef, MemoryIndex, ModuleTranslation,
+    DefinedFuncIndex, DefinedMemoryIndex, EntityRef, FuncKey, MemoryIndex, ModuleTranslation,
     OwnedMemoryIndex, PrimaryMap, PtrSize, StaticModuleIndex, Tunables, VMOffsets,
 };
 
@@ -56,10 +56,7 @@ pub struct Compilation<'a> {
     ///
     /// This returns the `object`-based-symbol for the function as well as the
     /// `&CompiledFunction`.
-    get_func: &'a dyn Fn(
-        StaticModuleIndex,
-        DefinedFuncIndex,
-    ) -> (Option<SymbolId>, &'a CompiledFunctionMetadata),
+    get_func: &'a dyn Fn(FuncKey) -> Option<(Option<SymbolId>, &'a CompiledFunctionMetadata)>,
 
     /// Optionally-specified `*.dwp` file, currently only supported for core
     /// wasm modules.
@@ -71,7 +68,7 @@ pub struct Compilation<'a> {
     /// Translation between `SymbolId` and a `usize`-based symbol which gimli
     /// uses.
     symbol_index_to_id: Vec<Option<SymbolId>>,
-    symbol_id_to_index: HashMap<SymbolId, (usize, StaticModuleIndex, DefinedFuncIndex)>,
+    symbol_id_to_index: HashMap<SymbolId, (usize, FuncKey)>,
 
     /// The `ModuleMemoryOffset` for each module within `translations`.
     ///
@@ -83,10 +80,7 @@ impl<'a> Compilation<'a> {
     pub fn new(
         isa: &dyn TargetIsa,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (Option<SymbolId>, &'a CompiledFunctionMetadata),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(Option<SymbolId>, &'a CompiledFunctionMetadata)>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Compilation<'a> {
@@ -130,10 +124,30 @@ impl<'a> Compilation<'a> {
         let mut symbol_id_to_index = HashMap::new();
 
         for (module, translation) in translations {
+            #[cfg(feature = "profiler")]
+            for key in translation.line_offsets.keys() {
+                let Some((sym, _func)) = get_func(*key) else {
+                    continue;
+                };
+                let Some(sym) = sym else {
+                    continue;
+                };
+                if symbol_id_to_index.contains_key(&sym) {
+                    continue;
+                }
+                symbol_id_to_index.insert(sym, (symbol_index_to_id.len(), *key));
+                symbol_index_to_id.push(Some(sym));
+            }
             for func in translation.module.defined_func_indices() {
-                let (sym, _func) = get_func(module, func);
+                let key = FuncKey::DefinedWasmFunction(module, func);
+                let Some((sym, _func)) = get_func(key) else {
+                    continue;
+                };
                 if let Some(sym) = sym {
-                    symbol_id_to_index.insert(sym, (symbol_index_to_id.len(), module, func));
+                    if symbol_id_to_index.contains_key(&sym) {
+                        continue;
+                    }
+                    symbol_id_to_index.insert(sym, (symbol_index_to_id.len(), key));
                 }
                 symbol_index_to_id.push(sym);
             }
@@ -183,14 +197,32 @@ impl<'a> Compilation<'a> {
         module: StaticModuleIndex,
         func: DefinedFuncIndex,
     ) -> (Option<usize>, &'a CompiledFunctionMetadata) {
-        let (sym, func) = (self.get_func)(module, func);
-        (sym.map(|sym| self.symbol_id_to_index[&sym].0), func)
+        let key = FuncKey::DefinedWasmFunction(module, func);
+        let (sym, func) = (self.get_func)(key).unwrap();
+        (
+            sym.and_then(|sym| self.symbol_id_to_index.get(&sym).map(|(i, _)| *i)),
+            func,
+        )
+    }
+
+    /// Returns the symbol and metadata associated with a specific function key.
+    #[cfg(feature = "profiler")]
+    fn function_by_key(&self, key: FuncKey) -> Option<(usize, &'a CompiledFunctionMetadata)> {
+        let (sym, func) = (self.get_func)(key)?;
+        let index = self.symbol_id_to_index.get(&sym?)?.0;
+        Some((index, func))
     }
 
     /// Maps a `usize`-based symbol used by gimli to the object-based
     /// `SymbolId`.
     pub fn symbol_id(&self, sym: usize) -> Option<SymbolId> {
         self.symbol_index_to_id[sym]
+    }
+
+    /// Returns the tunables used for this compilation.
+    #[cfg(feature = "profiler")]
+    pub fn tunables(&self) -> &Tunables {
+        self.tunables
     }
 }
 

@@ -2,6 +2,8 @@ use crate::TRAP_INTERNAL_ASSERT;
 use crate::alias_region::AliasRegions;
 use crate::debug::DwarfSectionRelocTarget;
 use crate::func_environ::FuncEnvironment;
+#[cfg(feature = "profiler")]
+use crate::profile::{OperatorKind, ProfileState};
 use crate::translate::{FuncTranslator, VmctxLoadChain};
 use crate::{BuiltinFunctionSignatures, builder::LinkOptions, wasm_call_signature};
 use crate::{CompiledFunction, ModuleTextBuilder, array_call_signature};
@@ -39,11 +41,10 @@ use wasmtime_environ::error::{Context as _, Result};
 use wasmtime_environ::obj::{ELF_WASMTIME_EXCEPTIONS, ELF_WASMTIME_FRAMES};
 use wasmtime_environ::{
     Abi, AddressMapSection, BuiltinFunctionIndex, CacheStore, CompileError, CompiledFunctionBody,
-    DefinedFuncIndex, FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder,
-    FrameTableBuilder, FuncKey, FunctionBodyData, FunctionLoc, GetPtrSize, HostCall,
-    InliningCompiler, ModulePC, ModuleStartup, ModuleTranslation, ModuleTypesBuilder, PtrSize,
-    StackMapSection, StaticModuleIndex, TrapEncodingBuilder, TrapSentinel, TripleExt, Tunables,
-    WasmFuncType, WasmValType, prelude::*,
+    FlagValue, FrameInstPos, FrameStackShape, FrameStateSlotBuilder, FrameTableBuilder, FuncKey,
+    FunctionBodyData, FunctionLoc, GetPtrSize, HostCall, InliningCompiler, ModulePC, ModuleStartup,
+    ModuleTranslation, ModuleTypesBuilder, PtrSize, StackMapSection, StaticModuleIndex,
+    TrapEncodingBuilder, TrapSentinel, TripleExt, Tunables, WasmFuncType, WasmValType, prelude::*,
 };
 use wasmtime_unwinder::ExceptionTableBuilder;
 
@@ -217,6 +218,14 @@ impl Compiler {
         let mut compiler = self.function_compiler();
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_call_sig);
         let (mut builder, block0) = compiler.builder(func);
+        #[cfg(feature = "profiler")]
+        let profile = ProfileState::new_with_op(symbol.to_owned(), OperatorKind::W2ATrampoline, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         let args = builder.func.dfg.block_params(block0).to_vec();
         let callee_vmctx = args[0];
@@ -314,6 +323,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 
@@ -348,6 +359,14 @@ impl Compiler {
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_sig.clone());
         let (mut builder, block0) = compiler.builder(func);
         let vmctx = builder.block_params(block0)[0];
+        #[cfg(feature = "profiler")]
+        let profile = ProfileState::new_with_op(symbol.to_owned(), OperatorKind::ImportPLT, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         // Debug-assert that this is the right kind of vmctx, and then
         // additionally perform the "routine of the exit trampoline" of saving
@@ -430,6 +449,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 
@@ -446,6 +467,21 @@ impl Compiler {
         let (namespace, index) = key.into_raw_parts();
         context.func.name = UserFuncName::User(UserExternalName { namespace, index });
         let mut func_env = FuncEnvironment::new(self, translation, types, ty, key, None, 0);
+
+        #[cfg(feature = "profiler")]
+        let profile = ProfileState::new_with_op("init_func".to_owned(), OperatorKind::InitFunc, 0);
+        // This synthesized function is mapped to the profile's single
+        // `InitFunc` line as a whole: install that line's srcloc as the
+        // function's base srcloc so that the builder srcloc set up by
+        // `translate_module_startup` resolves to it.
+        #[cfg(feature = "profiler")]
+        if self.tunables.enable_profile {
+            context
+                .func
+                .params
+                .ensure_base_srcloc(profile.current_srcloc());
+        }
+
         compiler
             .cx
             .func_translator
@@ -453,6 +489,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: func_env.needs_gc_heap(),
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 }
@@ -606,6 +644,8 @@ impl wasmtime_environ::Compiler for Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap,
+            #[cfg(feature = "profiler")]
+            profile: func_env.profile.take().map(ProfileState::into_info),
         })
     }
 
@@ -875,10 +915,7 @@ impl wasmtime_environ::Compiler for Compiler {
         &self,
         obj: &mut Object<'_>,
         translations: &'a PrimaryMap<StaticModuleIndex, ModuleTranslation<'a>>,
-        get_func: &'a dyn Fn(
-            StaticModuleIndex,
-            DefinedFuncIndex,
-        ) -> (Option<SymbolId>, &'a (dyn Any + Send + Sync)),
+        get_func: &'a dyn Fn(FuncKey) -> Option<(Option<SymbolId>, &'a (dyn Any + Send + Sync))>,
         dwarf_package_bytes: Option<&'a [u8]>,
         tunables: &'a Tunables,
     ) -> Result<()> {
@@ -889,10 +926,10 @@ impl wasmtime_environ::Compiler for Compiler {
             log::trace!("get_func({m:?}, {f:?}) -> ({sym:?}, {any:#p})");
             debug_assert!(!any.is::<Option<Box<CompilerContext>>>());
             debug_assert!(any.is::<CompiledFunction>());
-            (
+            Some((
                 sym,
                 any.downcast_ref::<CompiledFunction>().unwrap().metadata(),
-            )
+            ))
         };
 
         let mut compilation = crate::debug::Compilation::new(
@@ -1479,6 +1516,14 @@ impl Compiler {
         let mut compiler = self.function_compiler();
         let func = ir::Function::with_name_signature(key_to_name(trampoline_key), array_call_sig);
         let (mut builder, block0) = compiler.builder(func);
+        #[cfg(feature = "profiler")]
+        let profile = ProfileState::new_with_op(symbol.to_owned(), OperatorKind::A2WTrampoline, 0);
+
+        #[cfg(feature = "profiler")]
+        builder
+            .func
+            .params
+            .ensure_base_srcloc(profile.current_srcloc());
 
         let try_call_block = builder.create_block();
         builder.ins().jump(try_call_block, []);
@@ -1636,6 +1681,8 @@ impl Compiler {
         Ok(CompiledFunctionBody {
             code: box_dyn_any_compiler_context(Some(compiler.cx)),
             needs_gc_heap: false,
+            #[cfg(feature = "profiler")]
+            profile: Some(profile.into_info()),
         })
     }
 }

@@ -514,7 +514,12 @@ impl AddressTransform {
             object::Endianness::Little,
         );
         let dummy_symbol = dummy_obj.add_file_symbol(Vec::new());
-        let func_lookup = move |_, f| (Some(dummy_symbol), module_map[f]);
+        let func_lookup = move |key: wasmtime_environ::FuncKey| {
+            let wasmtime_environ::FuncKey::DefinedWasmFunction(_, f) = key else {
+                return None;
+            };
+            Some((Some(dummy_symbol), module_map[f]))
+        };
         let tunables = wasmtime_environ::Tunables::default_host();
         let compile = Compilation::new(
             &*cranelift_codegen::isa::lookup(target_lexicon::Triple::host())
