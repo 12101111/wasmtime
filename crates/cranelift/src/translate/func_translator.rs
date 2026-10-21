@@ -353,10 +353,8 @@ fn parse_function_body(
         }
         #[cfg(feature = "profiler")]
         if environ.tunables().enable_profile {
-            environ.append_profile_opkind((&op).into(), pos.try_into().unwrap());
-            let srcloc = environ.profile.as_ref().unwrap().current_srcloc();
-            builder.set_srcloc(srcloc);
-            environ.next_srcloc = srcloc;
+            environ.append_profile_opkind(builder, (&op).into(), pos.try_into().unwrap());
+            environ.next_srcloc = environ.profile.as_ref().unwrap().current_srcloc();
         }
         let operand_types =
             validate_op_and_get_operand_types(validator, environ, &mut operand_types, &op, pos)?;

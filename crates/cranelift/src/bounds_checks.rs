@@ -20,7 +20,7 @@
 //! !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 use crate::{
-    Reachability,
+    Reachability, append_profile_default_inst, append_profile_inst,
     func_environ::FuncEnvironment,
     translate::{HeapData, TargetEnvironment},
     trap::TranslateTrap,
@@ -305,6 +305,7 @@ fn bounds_check_field_access(
             "static memories require the ability to use virtual memory"
         );
         return Reachable(compute_addr(
+            env,
             &mut builder.cursor(),
             heap,
             env.pointer_type(),
@@ -317,6 +318,7 @@ fn bounds_check_field_access(
     // in-bounds on this memory, no bounds checks necessary.
     if statically_in_bounds {
         return Reachable(compute_addr(
+            env,
             &mut builder.cursor(),
             heap,
             env.pointer_type(),
@@ -505,7 +507,10 @@ fn get_dynamic_heap_bound(
         // Emit the load chain that computes the heap bound.
         _ => {
             let vmctx = vmctx(&mut builder.cursor());
-            heap.bound.emit(&mut builder.cursor(), vmctx)
+            append_profile_inst!(env, builder, Load);
+            let bound = heap.bound.emit(&mut builder.cursor(), vmctx);
+            append_profile_default_inst!(env, builder);
+            bound
         }
     }
 }
@@ -594,7 +599,7 @@ fn explicit_check_oob_condition_and_compute_addr(
     }
     let addr_ty = env.pointer_type();
 
-    let mut addr = compute_addr(&mut builder.cursor(), heap, addr_ty, index, offset);
+    let mut addr = compute_addr(env, &mut builder.cursor(), heap, addr_ty, index, offset);
 
     if let OobBehavior::ConditionallyLoadFromZero {
         select_spectre_guard,
@@ -631,7 +636,9 @@ fn explicit_check_oob_condition_and_compute_addr(
 /// * `addr_ty` - the host's pointer type
 /// * `index` - the raw wasm index, of type `addr_ty`
 /// * `offset` - a static offset to add to `index`
+#[cfg_attr(not(feature = "profiler"), allow(unused_variables))]
 pub fn compute_addr(
+    env: &mut FuncEnvironment<'_>,
     pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
@@ -641,7 +648,9 @@ pub fn compute_addr(
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
     let vmctx = vmctx(pos);
+    append_profile_inst!(env, pos, Load);
     let heap_base = heap.base.emit(pos, vmctx);
+    append_profile_default_inst!(env, pos);
     let base_and_index = pos.ins().iadd(heap_base, index);
 
     if offset == 0 {
