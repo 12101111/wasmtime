@@ -1754,11 +1754,26 @@ impl FunctionCompiler<'_> {
             let data = body.get_binary_reader();
             let offset = data.original_position();
             let len = data.bytes_remaining();
+            // Profile mode needs an entry for every machine instruction (the
+            // DWARF line program is generated from the address map), so keep
+            // the instruction addresses even if the AOT address map section is
+            // not requested.
             compiled_function.set_address_map(
                 offset.try_into().unwrap(),
                 len.try_into().unwrap(),
-                tunables.generate_address_map,
+                tunables.generate_address_map || tunables.enable_profile,
             );
+        } else {
+            // Trampolines and other synthesized functions have no wasm body to
+            // derive a source range from, but they are still part of the AOT
+            // image and are executed (and profiled). Give them an address map
+            // covering their whole code so that the profile DWARF line program
+            // has a sequence for them; otherwise their instructions have no
+            // DWARF row at all and every event in them is reported as a
+            // "missing DIE" failure.
+            if self.compiler.tunables.enable_profile {
+                compiled_function.set_address_map(0, 0, true);
+            }
         }
 
         if isa.flags().unwind_info() {

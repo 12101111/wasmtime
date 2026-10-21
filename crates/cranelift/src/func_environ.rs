@@ -1113,6 +1113,11 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
         interned_ty: ModuleInternedTypeIndex,
     ) -> ir::Value {
         let vmctx = self.vmctx_val(pos);
+        // Both loads below are memory accesses that implement the type check;
+        // give them a tracked load entry like the other memory operations so
+        // that `call_indirect` type checks keep their instruction-level
+        // position in the profile.
+        append_profile_inst!(self, pos, Load);
         // Load the base pointer of the array of `VMSharedTypeIndex`es.
         let shared_indices = self.alias_regions.vmctx_shared_type_ids_array(pos, vmctx);
 
@@ -1120,8 +1125,11 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
         // Load the`VMSharedTypeIndex` that this `ModuleInternedTypeIndex` is
         // associated with at runtime from the array.
-        self.alias_regions
-            .type_ids_array_element(pos, shared_indices, interned_ty)
+        let ty = self
+            .alias_regions
+            .type_ids_array_element(pos, shared_indices, interned_ty);
+        append_profile_default_inst!(self, pos);
+        ty
     }
 
     /// Does this function need a GC heap?
@@ -1912,11 +1920,16 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
 
         // First append the callee vmctx address.
         let vmctx = self.env.vmctx_val(&mut self.builder.cursor());
+        // The callee `vmctx` is loaded out of the imported function's entry in
+        // the vmctx: a real memory access which needs its own profile
+        // position (like the other tracked loads).
+        append_profile_inst!(self.env, self.builder, Load);
         let callee_vmctx = self.env.alias_regions.vmctx_vmfunction_import_vmctx(
             &mut self.builder.cursor(),
             vmctx,
             callee_index,
         );
+        append_profile_default_inst!(self.env, self.builder);
         real_call_args.push(callee_vmctx);
         real_call_args.push(caller_vmctx);
 
@@ -1985,11 +1998,13 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
                         }
                     }
                 }
+                append_profile_inst!(self.env, self.builder, Load);
                 let func_addr = self.env.alias_regions.vmctx_vmfunction_import_wasm_call(
                     &mut self.builder.cursor(),
                     vmctx,
                     callee_index,
                 );
+                append_profile_default_inst!(self.env, self.builder);
                 Ok(self.indirect_call_inst(sig_ref, func_addr, &real_call_args))
             }
 
@@ -1999,11 +2014,13 @@ impl<'a, 'func, 'module_env> Call<'a, 'func, 'module_env> {
             // and with different functions. Either way, we have to do the
             // indirect call.
             None => {
+                append_profile_inst!(self.env, self.builder, Load);
                 let func_addr = self.env.alias_regions.vmctx_vmfunction_import_wasm_call(
                     &mut self.builder.cursor(),
                     vmctx,
                     callee_index,
                 );
+                append_profile_default_inst!(self.env, self.builder);
                 Ok(self.indirect_call_inst(sig_ref, func_addr, &real_call_args))
             }
         }
@@ -3770,12 +3787,16 @@ impl FuncEnvironment<'_> {
             // This is an imported memory, so load the vmctx/defined index from
             // the import definition itself.
             None => {
+                // The import's vmctx/index pair lives in the vmctx, so this is
+                // a tracked memory access like the other vmctx loads.
+                append_profile_inst!(self, pos, Load);
                 let vmctx = self
                     .alias_regions
                     .vmctx_vmmemory_import_vmctx(pos, cur_vmctx, index);
                 let index = self
                     .alias_regions
                     .vmctx_vmmemory_import_index(pos, cur_vmctx, index);
+                append_profile_default_inst!(self, pos);
                 (vmctx, index)
             }
         }
@@ -3796,12 +3817,14 @@ impl FuncEnvironment<'_> {
         match self.module.defined_table_index(index) {
             Some(index) => (cur_vmctx, pos.ins().iconst(I32, i64::from(index.as_u32()))),
             None => {
+                append_profile_inst!(self, pos, Load);
                 let vmctx = self
                     .alias_regions
                     .vmctx_vmtable_import_vmctx(pos, cur_vmctx, index);
                 let index = self
                     .alias_regions
                     .vmctx_vmtable_import_index(pos, cur_vmctx, index);
+                append_profile_default_inst!(self, pos);
                 (vmctx, index)
             }
         }
@@ -3824,9 +3847,14 @@ impl FuncEnvironment<'_> {
         self.pre_translate_bulk_op(builder, val, cost)?;
         let mut pos = builder.cursor();
         let val = self.cast_index_to_i64(&mut pos, val, index_type);
-        let call_inst = pos
-            .ins()
-            .call(memory_grow, &[memory_vmctx, val, defined_memory_index]);
+        // Use the profiled call wrapper so the underlying libcall keeps an
+        // instruction-level position (the call is the only machine code
+        // generated for `memory.grow`).
+        let call_inst = self.build_call(
+            &mut pos,
+            memory_grow,
+            &[memory_vmctx, val, defined_memory_index],
+        );
         let result = *pos.func.dfg.inst_results(call_inst).first().unwrap();
         let single_byte_pages = match self.memory(index).page_size_log2 {
             16 => false,
@@ -3848,7 +3876,10 @@ impl FuncEnvironment<'_> {
     fn memory_size_in_bytes(&mut self, pos: &mut FuncCursor<'_>, index: MemoryIndex) -> ir::Value {
         let vmctx = self.vmctx_val(pos);
         let is_shared = self.module.memories[index].shared;
-        if let Some(def_index) = self.module.defined_memory_index(index) {
+        // Loading the current memory length from the vmctx (or the imported
+        // memory description) is a real memory access of the bounds check.
+        append_profile_inst!(self, pos, Load);
+        let value = if let Some(def_index) = self.module.defined_memory_index(index) {
             if is_shared {
                 let mem_ptr = self
                     .alias_regions
@@ -3883,7 +3914,9 @@ impl FuncEnvironment<'_> {
                     .current_length()
                     .load(pos, mem_ptr)
             }
-        }
+        };
+        append_profile_default_inst!(self, pos);
+        value
     }
 
     pub fn translate_memory_size(
@@ -4510,15 +4543,27 @@ impl FuncEnvironment<'_> {
         let base = match entity {
             CheckedEntity::Memory(i) => {
                 let heap = self.get_or_create_heap(builder.func, i);
+                // Copy the load chain out before recording the profile entry so
+                // that `self` is not borrowed twice.
+                let chain = self.heaps()[heap].base.clone();
                 // Obtain the vmctx value before borrowing `self.heaps()`.
                 let vmctx = self.vmctx_val(&mut builder.cursor());
-                let heap = &self.heaps()[heap];
-                heap.base.emit(&mut builder.cursor(), vmctx)
+                // The base address is loaded from the vmctx; track it as a
+                // profiled load so the bulk-memory operations that use this
+                // address keep an instruction-level position.
+                append_profile_inst!(self, builder, Load);
+                let base = chain.emit(&mut builder.cursor(), vmctx);
+                append_profile_default_inst!(self, builder);
+                base
             }
             CheckedEntity::Table { table, .. } => {
                 let table = self.get_or_create_table(builder.func, table);
+                let chain = table.base.clone();
                 let vmctx = self.vmctx_val(&mut builder.cursor());
-                table.base.emit(&mut builder.cursor(), vmctx)
+                append_profile_inst!(self, builder, Load);
+                let base = chain.emit(&mut builder.cursor(), vmctx);
+                append_profile_default_inst!(self, builder);
+                base
             }
             CheckedEntity::Data { segment, .. } => match self.translation.runtime_data_map[segment]
             {
@@ -5418,7 +5463,14 @@ impl FuncEnvironment<'_> {
         // of the function.
         if let Some(limit) = self.stack_limit_at_function_entry.take() {
             let vmctx = self.vmctx_val(&mut builder.cursor());
+            // The stack limit is loaded from the vmctx chain, i.e. this is a
+            // real memory access of the function prologue. Record it as a
+            // tracked load, otherwise the prologue instructions only get the
+            // entry block's `(line, 0)` source location and every function
+            // entry shows up as an unmapped instruction.
+            append_profile_inst!(self, builder, Load);
             let limit = limit.emit(&mut builder.cursor(), vmctx);
+            append_profile_default_inst!(self, builder);
             let sp = builder.ins().get_stack_pointer(self.pointer_type());
             let overflow = builder.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
             self.conditionally_trap(builder, overflow, ir::TrapCode::STACK_OVERFLOW);
