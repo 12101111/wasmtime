@@ -41,6 +41,10 @@ pub const SH_WASMTIME_NOT_EXECUTED: u64 = 1 << 0;
 /// text section.
 pub const ELF_WASMTIME_ADDRMAP: &str = ".wasmtime.addrmap";
 
+/// A custom Wasmtime-specific section of compilation which stores serialized
+/// profile data for virtual source code mapping.
+pub const ELF_WASMTIME_PROFILE: &str = ".wasmtime.profile";
+
 /// A custom Wasmtime-specific section of compilation which store information
 /// about live gc references at various locations in the text section (stack
 /// maps).

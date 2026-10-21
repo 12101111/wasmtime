@@ -155,6 +155,7 @@ default = [
   'debug',
   'compile-time-builtins',
   'wit-parser',
+  'profiler',
 ]
 
 # Enables conversion helpers between `anyhow::Error` and `wasmtime::Error`.
@@ -173,6 +174,13 @@ cranelift = ["dep:wasmtime-cranelift", "std", "wasmtime-unwinder/cranelift"]
 # strategy in `Config` will be available. It is currently in active development
 # and shouldn't be used in production applications.
 winch = ["dep:wasmtime-winch", "std"]
+
+# Enables virtual source code profiling support.
+profiler = [
+  "wasmtime-environ/profiler",
+  "wasmtime-cranelift?/profiler",
+  "wasmtime-winch?/profiler",
+]
 
 # Enables support for Pulley, the WebAssembly interpreter. When paired with the
 # `cranelift` feature, the compiler backends for the `pulley32` and `pulley64`
@@ -223,7 +231,7 @@ pooling-allocator = [
 # Enables support for all architectures in Cranelift, allowing
 # cross-compilation using the `wasmtime` crate's API, notably the
 # `Engine::precompile_module` function.
-all-arch = ["wasmtime-cranelift?/all-arch", "wasmtime-winch?/all-arch", "pulley"]
+all-arch = ["wasmtime-cranelift?/all-arch", "wasmtime-cranelift?/profiler", "wasmtime-winch?/all-arch", "pulley"]
 
 # Enables in-progress support for the component model. Note that this feature is
 # in-progress, buggy, and incomplete. This is primarily here for internal

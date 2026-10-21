@@ -43,6 +43,8 @@ mod builder;
 mod compiler;
 mod debug;
 mod func_environ;
+#[cfg(feature = "profiler")]
+mod profile;
 mod translate;
 mod trap;
 

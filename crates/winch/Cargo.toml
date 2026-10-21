@@ -24,3 +24,4 @@ log = { workspace = true }
 
 [features]
 all-arch = ["winch-codegen/all-arch"]
+profiler = ["wasmtime-environ/profiler", "wasmtime-cranelift/profiler"]

@@ -7,6 +7,8 @@ use cranelift_codegen::isa::TargetIsa;
 use gimli::{DwarfPackage, LittleEndian, Section, write};
 use std::collections::HashSet;
 use synthetic::ModuleSyntheticUnit;
+#[cfg(feature = "profiler")]
+use wasmtime_environ::FuncKey;
 use wasmtime_environ::error::Error;
 use wasmtime_environ::{
     DefinedFuncIndex, ModuleTranslation, PrimaryMap, StaticModuleIndex, Tunables, prelude::*,
@@ -133,6 +135,21 @@ pub fn transform_dwarf(
 ) -> Result<write::Dwarf, Error> {
     dbi_log!("Commencing DWARF transform for {:?}", compilation);
 
+    let out_encoding = gimli::Encoding {
+        format: gimli::Format::Dwarf32,
+        version: 4, // TODO: this should be configurable
+        address_size: isa.pointer_bytes(),
+    };
+
+    // When profiling is enabled, the SourceLoc values encode virtual source
+    // code (line, column) pairs rather than Wasm byte offsets. In this mode
+    // we generate a fresh DWARF unit from the compiled function address maps
+    // instead of trying to translate the original Wasm DWARF.
+    #[cfg(feature = "profiler")]
+    if compilation.tunables().enable_profile {
+        return generate_profile_dwarf(compilation, out_encoding);
+    }
+
     let mut transforms = PrimaryMap::new();
     for (i, _) in compilation.translations.iter() {
         transforms.push(AddressTransform::new(compilation, i));
@@ -149,11 +166,6 @@ pub fn transform_dwarf(
         )
         .flatten();
 
-    let out_encoding = gimli::Encoding {
-        format: gimli::Format::Dwarf32,
-        version: 4, // TODO: this should be configurable
-        address_size: isa.pointer_bytes(),
-    };
     let mut out_dwarf = write::Dwarf::default();
 
     let mut vmctx_ptr_die_refs = PrimaryMap::new();
@@ -228,6 +240,188 @@ pub fn transform_dwarf(
         &mut out_dwarf.strings,
         isa,
     )?;
+
+    Ok(out_dwarf)
+}
+
+/// Generate DWARF debug information for profile mode.
+///
+/// When `enable_profile` is active, `SourceLoc` values encode virtual source
+/// code line/column pairs rather than Wasm byte offsets. This function creates
+/// a fresh DWARF compilation unit with a synthetic line program that maps
+/// machine code addresses directly to the virtual source positions.
+#[cfg(feature = "profiler")]
+fn generate_profile_dwarf(
+    compilation: &Compilation<'_>,
+    out_encoding: gimli::Encoding,
+) -> Result<write::Dwarf, Error> {
+    use crate::profile::decode_srcloc;
+    use cranelift_codegen::ir::SourceLoc;
+    use gimli::LineEncoding;
+
+    let mut out_dwarf = write::Dwarf::default();
+    let line_encoding = LineEncoding::default();
+
+    for (_module, translation) in compilation.translations.iter() {
+        let id = out_dwarf.strings.add(b".");
+
+        let out_comp_dir = write::LineString::StringRef(id);
+        let out_comp_name = write::LineString::StringRef(id);
+
+        let mut out_program = write::LineProgram::new(
+            out_encoding,
+            line_encoding,
+            out_comp_dir,
+            None,
+            out_comp_name,
+            None,
+        );
+
+        let file_index = out_program.add_file(
+            write::LineString::String(b"module".to_vec()),
+            out_program.default_directory(),
+            None,
+        );
+
+        // Build line program sequences for all compiled functions with profile info.
+        for (key, &line_offset) in translation.line_offsets.iter() {
+            let Some((sym, meta)) = compilation.function_by_key(*key) else {
+                continue;
+            };
+            let address_map = &meta.address_map;
+
+            if address_map.instructions.is_empty() {
+                continue;
+            }
+
+            out_program.begin_sequence(Some(write::Address::Symbol {
+                symbol: sym,
+                addend: 0,
+            }));
+
+            // Emit a row for offset zero - debuggers expect this.
+            out_program.row().address_offset = 0;
+            out_program.row().file = file_index;
+            out_program.row().line = line_offset as u64;
+            out_program.row().column = 0;
+            out_program.row().is_statement = true;
+            if address_map.body_offset > 0 {
+                out_program.row().prologue_end = false;
+                out_program.generate_row();
+                out_program.row().address_offset = address_map.body_offset as u64;
+                out_program.row().prologue_end = true;
+                out_program.generate_row();
+            } else {
+                out_program.row().prologue_end = true;
+                out_program.generate_row();
+            }
+
+            for instr in address_map.instructions.iter() {
+                // Entries without a source location (e.g. gaps between
+                // instructions, alignment padding, or instructions for which
+                // the compiler did not record a location) simply repeat the
+                // previous row. Emitting that row again would only bloat the
+                // line program: the previous row already covers this address.
+                let Some(bits) = instr.srcloc.file_offset() else {
+                    continue;
+                };
+                let (line, column) = decode_srcloc(SourceLoc::new(bits));
+                let line = line as u64 + line_offset as u64;
+                let column = column as u64;
+
+                out_program.row().address_offset = instr.code_offset as u64;
+                out_program.row().file = file_index;
+                out_program.row().line = line;
+                out_program.row().column = column;
+                out_program.row().is_statement = true;
+                out_program.row().prologue_end = false;
+                out_program.generate_row();
+                log::debug!("map {} to {}:{}", instr.code_offset, line, column);
+            }
+
+            out_program.end_sequence(address_map.body_len as u64);
+        }
+
+        let unit_id = out_dwarf
+            .units
+            .add(write::Unit::new(out_encoding, out_program));
+        let unit = out_dwarf.units.get_mut(unit_id);
+        let root_id = unit.root();
+        let root = unit.get_mut(root_id);
+
+        let producer_id = out_dwarf.strings.add("wasmtime");
+        root.set(
+            gimli::DW_AT_producer,
+            write::AttributeValue::StringRef(producer_id),
+        );
+        root.set(
+            gimli::DW_AT_language,
+            write::AttributeValue::Language(gimli::DW_LANG_C11),
+        );
+        root.set(gimli::DW_AT_name, write::AttributeValue::StringRef(id));
+        root.set(
+            gimli::DW_AT_stmt_list,
+            write::AttributeValue::LineProgramRef,
+        );
+        root.set(gimli::DW_AT_comp_dir, write::AttributeValue::StringRef(id));
+
+        // Add subprogram DIEs for each function.
+        for key in translation.line_offsets.keys() {
+            let Some((sym, meta)) = compilation.function_by_key(*key) else {
+                continue;
+            };
+            let address_map = &meta.address_map;
+
+            if address_map.instructions.is_empty() {
+                continue;
+            }
+
+            let die_id = unit.add(root_id, gimli::DW_TAG_subprogram);
+            let die = unit.get_mut(die_id);
+            die.set(
+                gimli::DW_AT_low_pc,
+                write::AttributeValue::Address(write::Address::Symbol {
+                    symbol: sym,
+                    addend: 0,
+                }),
+            );
+            die.set(
+                gimli::DW_AT_high_pc,
+                write::AttributeValue::Udata(address_map.body_len as u64),
+            );
+
+            let func_name = match key {
+                FuncKey::DefinedWasmFunction(_, func) => {
+                    let func_index = translation.module.func_index(*func);
+                    translation
+                        .debuginfo
+                        .name_section
+                        .func_names
+                        .get(&func_index)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("wasm-function[{}]", func_index.as_u32()))
+                }
+                FuncKey::ArrayToWasmTrampoline(_, func) => {
+                    let func_index = translation.module.func_index(*func);
+                    format!("array_to_wasm_trampoline[{}]", func_index.as_u32())
+                }
+                FuncKey::WasmToArrayTrampoline(_) => "wasm_to_array_trampoline".to_string(),
+                FuncKey::WasmToBuiltinTrampoline(builtin) => {
+                    format!("wasm_to_builtin_trampoline[{}]", builtin.index())
+                }
+                _ => format!("{key:?}"),
+            };
+            let func_name_id = out_dwarf.strings.add(func_name);
+            die.set(
+                gimli::DW_AT_name,
+                write::AttributeValue::StringRef(func_name_id),
+            );
+            die.set(
+                gimli::DW_AT_decl_file,
+                write::AttributeValue::FileIndex(Some(file_index)),
+            );
+        }
+    }
 
     Ok(out_dwarf)
 }

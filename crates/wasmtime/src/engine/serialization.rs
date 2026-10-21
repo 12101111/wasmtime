@@ -348,6 +348,10 @@ impl Metadata<'_> {
             // Only affects cold-block layout; a compiled artifact loads into an
             // engine configured either way.
             branch_hinting: _,
+
+            // Only affects generated profile metadata; a compiled artifact
+            // loads into an engine configured either way.
+            enable_profile: _,
         } = self.tunables;
 
         Self::check_collector(collector, other.collector)?;

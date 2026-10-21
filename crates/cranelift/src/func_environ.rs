@@ -181,6 +181,10 @@ pub struct FuncEnvironment<'module_environment> {
 
     tunables: &'module_environment Tunables,
 
+    /// Function level profiler state for virtual source code mapping.
+    #[cfg(feature = "profiler")]
+    pub(crate) profile: Option<crate::profile::ProfileState>,
+
     /// A function-local variable which stores the cached value of the amount of
     /// fuel remaining to execute. If used this is modified frequently so it's
     /// stored locally as a variable instead of always referenced from the field
@@ -308,6 +312,9 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
 
             branch_hints,
             func_body_offset,
+
+            #[cfg(feature = "profiler")]
+            profile: None,
 
             alias_regions: AliasRegions::new(offsets),
         }
@@ -2567,6 +2574,14 @@ impl<'module_environment> TargetEnvironment for FuncEnvironment<'module_environm
 }
 
 impl FuncEnvironment<'_> {
+    /// Append an operator kind to the profile.
+    #[cfg(feature = "profiler")]
+    pub fn append_profile_opkind(&mut self, op: crate::profile::OperatorKind, pos: u32) {
+        if let Some(profile) = &mut self.profile {
+            profile.append_opkind(op, pos);
+        }
+    }
+
     pub fn heaps(&self) -> &PrimaryMap<Heap, HeapData> {
         &self.heaps
     }
