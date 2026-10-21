@@ -656,6 +656,9 @@ pub struct AliasAnalysis<'a> {
     /// Known memory-value equivalences. This is the result of the
     /// analysis. This is a mapping from a memory location to its known value.
     mem_values: FxHashMap<MemoryLoc, KnownValue>,
+
+    /// when set, this pass performs no optimizations at all
+    disabled: bool,
 }
 
 impl<'a> AliasAnalysis<'a> {
@@ -669,10 +672,16 @@ impl<'a> AliasAnalysis<'a> {
             observed_stores: FxHashMap::default(),
             block_input: FxHashMap::default(),
             mem_values: FxHashMap::default(),
+            disabled: false,
         };
 
         analysis.compute_block_input_states(func);
         analysis
+    }
+
+    /// Disable all alias-analysis-based optimizations in this pass.
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
     }
 
     /// Does `overwriter` post-dominate `maybe_dead`?
@@ -773,6 +782,10 @@ impl<'a> AliasAnalysis<'a> {
         state: &mut LastStores,
         inst: Inst,
     ) -> OptResult {
+        if self.disabled {
+            return OptResult::None;
+        }
+
         trace!(
             "process_inst: {inst}: {}\n\twith last stores: {state:?}\n\twith mem values = {:?}",
             func.dfg.display_inst(inst),
