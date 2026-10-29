@@ -60,6 +60,14 @@ pub const SH_WASMTIME_NOT_EXECUTED: u64 = 1 << 0;
 /// mean that >=4gb text sections are not supported.
 pub const ELF_WASMTIME_ADDRMAP: &str = ".wasmtime.addrmap";
 
+/// A custom Wasmtime-specific section which stores ranges of inline data and
+/// padding in the text section.
+///
+/// This section's format is defined by the documentation of
+/// `crate::compile::DataMapSection`. Its offsets are relative to the start of
+/// the text section.
+pub const ELF_WASMTIME_DATAMAP: &str = ".wasmtime.datamap";
+
 /// A custom Wasmtime-specific section of compilation which stores serialized
 /// profile data for virtual source code mapping.
 pub const ELF_WASMTIME_PROFILE: &str = ".wasmtime.profile";

@@ -59,6 +59,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::Debug;
 use core::num::NonZeroU8;
+use core::ops::Range;
 use cranelift_control::ControlPlane;
 use cranelift_entity::PrimaryMap;
 use regalloc2::VReg;
@@ -794,6 +795,9 @@ pub trait TextSectionBuilder {
         align: u32,
         ctrl_plane: &mut ControlPlane,
     ) -> u64;
+
+    /// Returns ranges of inline data and padding within the text section.
+    fn data_ranges(&self) -> &[Range<CodeOffset>];
 
     /// Attempts to resolve a relocation for this function.
     ///
