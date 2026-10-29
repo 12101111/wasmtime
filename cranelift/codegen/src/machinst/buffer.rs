@@ -268,6 +268,8 @@ enum ForceVeneers {
 pub struct MachBuffer<I: VCodeInst> {
     /// The buffer contents, as raw bytes.
     data: SmallVec<[u8; 1024]>,
+    /// Ranges of inline data and padding within the buffer.
+    data_ranges: SmallVec<[Range<CodeOffset>; 4]>,
     /// The required alignment of this buffer.
     min_alignment: u32,
     /// Any relocations referring to this code. Note that only *external*
@@ -367,6 +369,7 @@ impl MachBufferFinalized<Stencil> {
     pub fn apply_base_srcloc(self, base_srcloc: SourceLoc) -> MachBufferFinalized<Final> {
         MachBufferFinalized {
             data: self.data,
+            data_ranges: self.data_ranges,
             relocs: self.relocs,
             traps: self.traps,
             call_sites: self.call_sites,
@@ -398,6 +401,8 @@ impl MachBufferFinalized<Stencil> {
 pub struct MachBufferFinalized<T: CompilePhase> {
     /// The buffer contents, as raw bytes.
     pub(crate) data: SmallVec<[u8; 1024]>,
+    /// Ranges of inline data and padding within the buffer.
+    pub(crate) data_ranges: SmallVec<[Range<CodeOffset>; 4]>,
     /// Any relocations referring to this code. Note that only *external*
     /// relocations are tracked here; references to labels within the buffer are
     /// resolved before emission.
@@ -504,6 +509,7 @@ impl<I: VCodeInst> MachBuffer<I> {
         MachBuffer {
             data: SmallVec::new(),
             min_alignment: I::function_alignment().minimum,
+            data_ranges: SmallVec::new(),
             relocs: SmallVec::new(),
             traps: SmallVec::new(),
             call_sites: SmallVec::new(),
@@ -583,6 +589,16 @@ impl<I: VCodeInst> MachBuffer<I> {
         // Post-invariant: as for `put1()`.
     }
 
+    /// Add a slice of inline data which must not be disassembled as instructions.
+    pub fn put_inline_data(&mut self, data: &[u8]) {
+        let start = self.cur_offset();
+        self.put_data(data);
+        let end = self.cur_offset();
+        if start != end {
+            self.data_ranges.push(start..end);
+        }
+    }
+
     /// Reserve appended space and return a mutable slice referring to it.
     pub fn get_appended_space(&mut self, len: usize) -> &mut [u8] {
         let off = self.data.len();
@@ -600,8 +616,13 @@ impl<I: VCodeInst> MachBuffer<I> {
             align_to.is_power_of_two(),
             "{align_to} is not a power of two"
         );
+        let start = self.cur_offset();
         while self.cur_offset() & (align_to - 1) != 0 {
             self.put1(0);
+        }
+        let end = self.cur_offset();
+        if start != end {
+            self.data_ranges.push(start..end);
         }
 
         // Post-invariant: as for `put1()`.
@@ -910,7 +931,7 @@ impl<I: VCodeInst> MachBuffer<I> {
         self.data.truncate(b.start as usize);
         self.pending_fixup_records.truncate(b.fixup);
 
-        // Trim srclocs and debug tags now past the end of the buffer.
+        // Trim metadata now past the end of the buffer.
         while let Some(last_srcloc) = self.srclocs.last_mut() {
             if last_srcloc.end <= b.start {
                 break;
@@ -920,6 +941,16 @@ impl<I: VCodeInst> MachBuffer<I> {
                 break;
             }
             self.srclocs.pop();
+        }
+        while let Some(last_range) = self.data_ranges.last_mut() {
+            if last_range.end <= b.start {
+                break;
+            }
+            if last_range.start < b.start {
+                last_range.end = b.start;
+                break;
+            }
+            self.data_ranges.pop();
         }
         while let Some(last_debug_tag) = self.debug_tags.last() {
             if last_debug_tag.offset <= b.start {
@@ -1466,8 +1497,13 @@ impl<I: VCodeInst> MachBuffer<I> {
             let label = self.constants[constant].upcoming_label.take().unwrap();
             self.align_to(align);
             self.bind_label(label, ctrl_plane);
-            self.used_constants.push((constant, self.cur_offset()));
+            let start = self.cur_offset();
+            self.used_constants.push((constant, start));
             self.get_appended_space(size);
+            let end = self.cur_offset();
+            if start != end {
+                self.data_ranges.push(start..end);
+            }
         }
 
         if let Some(loc) = cur_loc {
@@ -1702,6 +1738,7 @@ impl<I: VCodeInst> MachBuffer<I> {
 
         MachBufferFinalized {
             data: self.data,
+            data_ranges: self.data_ranges,
             relocs: finalized_relocs,
             traps: self.traps,
             call_sites: self.call_sites,
@@ -1935,6 +1972,11 @@ impl<T: CompilePhase> MachBufferFinalized<T> {
                 tags: &self.debug_tag_pool[start..end],
             }
         })
+    }
+
+    /// Get ranges of inline data and padding within the buffer.
+    pub fn data_ranges(&self) -> &[Range<CodeOffset>] {
+        &self.data_ranges
     }
 
     /// Get the total required size for the code.
@@ -2542,8 +2584,16 @@ impl<I: VCodeInst> TextSectionBuilder for MachTextSectionBuilder<I> {
             );
             self.next_func += 1;
         }
-        self.buf.put_data(func);
+        if labeled {
+            self.buf.put_data(func);
+        } else {
+            self.buf.put_inline_data(func);
+        }
         u64::from(pos)
+    }
+
+    fn data_ranges(&self) -> &[Range<CodeOffset>] {
+        &self.buf.data_ranges
     }
 
     fn resolve_reloc(&mut self, offset: u64, reloc: Reloc, addend: Addend, target: usize) -> bool {
@@ -3182,5 +3232,53 @@ mod test {
 
         let buf = buf.finish(&constants, state.ctrl_plane_mut());
         let _ = buf.total_size();
+    }
+
+    #[test]
+    fn test_inline_data_ranges() {
+        use crate::ir::constant::ConstantData;
+
+        let mut buf = MachBuffer::<Inst>::new();
+        let mut state = <Inst as MachInstEmit>::State::default();
+        let mut constants = VCodeConstants::default();
+        let bytes = [0x5a; 16];
+        let handle = constants.insert(VCodeConstantData::Generated(ConstantData::from(&bytes[..])));
+        buf.register_constants(&constants);
+
+        buf.put4(0);
+        buf.put_inline_data(&[0xaa, 0xbb]);
+        buf.align_to(8);
+        let off = buf.cur_offset();
+        let const_label = buf.get_label_for_constant(handle);
+        buf.use_label_at_offset(off, const_label, aarch64::inst::LabelUse::Ldr19);
+        buf.put4(0);
+        buf.emit_island(0, state.ctrl_plane_mut());
+
+        let buf = buf.finish(&constants, state.ctrl_plane_mut());
+        assert_eq!(&buf.data_ranges()[..2], &[4..6, 6..8]);
+        let constant_start = buf.total_size() - bytes.len() as u32;
+        assert_eq!(
+            buf.data_ranges().last().unwrap(),
+            &(constant_start..buf.total_size())
+        );
+        assert_eq!(&buf.data()[constant_start as usize..], &bytes);
+        for range in buf.data_ranges() {
+            assert!(range.start < range.end && range.end <= buf.total_size());
+            assert!(!range.contains(&0) && !range.contains(&8));
+        }
+    }
+
+    #[test]
+    fn test_branch_truncation_keeps_inline_data_valid() {
+        let mut buf = MachBuffer::<Inst>::new();
+        buf.reserve_labels_for_blocks(1);
+        buf.put_inline_data(&[0xaa, 0xbb]);
+        buf.align_to(4);
+        buf.use_label_at_offset(4, label(0), aarch64::inst::LabelUse::Branch19);
+        buf.add_uncond_branch(4, 8, label(0));
+        buf.put4(0);
+        buf.truncate_last_branch();
+        assert_eq!(buf.cur_offset(), 4);
+        assert_eq!(&buf.data_ranges[..], &[0..2, 2..4]);
     }
 }
