@@ -23,7 +23,7 @@ use object::write::{Object, SectionId, StandardSegment, Symbol, SymbolId, Symbol
 use object::{Architecture, SectionFlags, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
 use std::ops::Range;
 use wasmtime_environ::error::Result;
-use wasmtime_environ::{Compiler as _, FuncKey, TripleExt, obj};
+use wasmtime_environ::{Compiler as _, DataMapSection, FuncKey, TripleExt, obj};
 
 const TEXT_SECTION_NAME: &[u8] = b".text";
 
@@ -55,6 +55,8 @@ pub struct ModuleTextBuilder<'a> {
     text_section: SectionId,
 
     unwind_info: UnwindInfoBuilder<'a>,
+
+    data_map: DataMapSection,
 
     /// In-progress text section that we're using cranelift's `MachBuffer` to
     /// build to resolve relocations (calls) between functions.
@@ -99,6 +101,7 @@ impl<'a> ModuleTextBuilder<'a> {
             obj,
             text_section,
             unwind_info: Default::default(),
+            data_map: DataMapSection::default(),
             text,
             ctrl_plane: ControlPlane::default(),
         }
@@ -126,6 +129,8 @@ impl<'a> ModuleTextBuilder<'a> {
         let off = self
             .text
             .append(true, &body, alignment, &mut self.ctrl_plane);
+        self.data_map
+            .push(off..off + body_len, compiled_func.buffer.data_ranges());
 
         let symbol_id = if self.compiler.tunables().debug_symbols {
             Some(self.obj.add_symbol(Symbol {
@@ -221,6 +226,8 @@ impl<'a> ModuleTextBuilder<'a> {
     /// Note that this will also write out the unwind information sections if
     /// necessary.
     pub fn finish(mut self, postprocess_text: impl FnOnce(&mut [u8])) {
+        self.data_map.push_text_ranges(self.text.data_ranges());
+
         // Finish up the text section now that we're done adding functions.
         let mut text = self.text.finish(&mut self.ctrl_plane);
 
@@ -233,6 +240,7 @@ impl<'a> ModuleTextBuilder<'a> {
         // Append the unwind information for all our functions, if necessary.
         self.unwind_info
             .append_section(self.compiler, self.obj, self.text_section);
+        self.data_map.append_to(self.obj);
     }
 }
 

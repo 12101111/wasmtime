@@ -881,7 +881,7 @@ impl Inst {
                 // use to load some data and rely on some position in the code stream.
                 // and we may exceed `Inst::worst_case_size`.
                 // for more information see https://github.com/bytecodealliance/wasmtime/pull/5612.
-                sink.put_data(&data[..]);
+                sink.put_inline_data(&data[..]);
             }
             &Inst::Lui { rd, ref imm } => {
                 let x: u32 = 0b0110111 | reg_to_gpr_num(rd.to_reg()) << 7 | (imm.bits() << 12);
