@@ -270,6 +270,22 @@ impl AliasRegionKey {
             AliasRegionKey::DataSegment => Self::DATA_SEGMENT_KIND,
         }
     }
+
+    /// Is this an access in the Wasm-visible memory layer, i.e. the vmctx, the
+    /// exec env, a linear memory, a table, or a global? Stack slots, the GC
+    /// heap (`GcHeap`), unsafe intrinsics, and segments are not included.
+    fn is_wasm_memory_layer(self) -> bool {
+        matches!(
+            self,
+            Self::Vm { .. }
+                | Self::PublicMemory
+                | Self::DefinedMemory { .. }
+                | Self::PublicTable
+                | Self::DefinedTable { .. }
+                | Self::PublicGlobal
+                | Self::DefinedGlobal { .. }
+        )
+    }
 }
 
 impl fmt::Debug for AliasRegionKey {
@@ -311,6 +327,11 @@ pub struct AliasRegions<Offsets> {
     pointer_type: ir::Type,
     offsets: Offsets,
 
+    /// Whether every access in the Wasm-visible memory layer (the vmctx, the
+    /// exec env, linear memories, tables, and globals) should share a single
+    /// alias region. This is enabled by disabling `enable_alias_analysis`.
+    collapse_wasm_memory_regions: bool,
+
     /// Cached alias regions for alias analysis.
     ///
     /// Avoids allocating a string for the debug formatting of `AliasRegionKey`
@@ -320,6 +341,9 @@ pub struct AliasRegions<Offsets> {
 
 impl<Offsets> AliasRegions<Offsets> {
     /// Make the alias region for a stack map.
+    ///
+    /// Stack slots are not part of the Wasm-visible memory layer, so this is
+    /// unaffected by `collapse_wasm_memory_regions`.
     pub fn stack_map_region(
         regions: &mut ir::AliasRegionSet,
         _ty: ir::Type,
@@ -346,10 +370,29 @@ impl<Offsets> AliasRegions<Offsets> {
 
     /// Get the alias region for the given key.
     fn region(&mut self, func: &mut ir::Function, key: AliasRegionKey) -> ir::AliasRegion {
-        *self
-            .cache
-            .entry(key)
-            .or_insert_with(|| func.dfg.alias_regions.insert(key.into()))
+        // With `collapse_wasm_memory_regions`, every access in the Wasm-visible
+        // memory layer shares one region, so accesses to the vmctx/exec
+        // env/tables/globals can no longer be proven disjoint from
+        // linear-memory accesses. Collapsing regions onto one `user_id` is
+        // always sound (it only loses optimization opportunities), and
+        // `AliasRegionSet::insert` deduplicates on `user_id`, so the per-key
+        // cache simply keeps several keys pointing at the same region.
+        let collapse = self.collapse_wasm_memory_regions && key.is_wasm_memory_layer();
+        *self.cache.entry(key).or_insert_with(|| {
+            if collapse {
+                // An ordinary key's 6-bit kind is at most `0b100011`, so
+                // `into_raw` can never produce `u32::MAX` (that would require
+                // kind `0b111111`), and the collapsed id cannot collide with a
+                // regular region's.
+                const COLLAPSED_WASM_MEMORY_USER_ID: u32 = u32::MAX;
+                func.dfg.alias_regions.insert(ir::AliasRegionData {
+                    user_id: COLLAPSED_WASM_MEMORY_USER_ID,
+                    description: "wasm memory (alias analysis disabled)".into(),
+                })
+            } else {
+                func.dfg.alias_regions.insert(key.into())
+            }
+        })
     }
 }
 
@@ -708,11 +751,16 @@ where
     Offsets: GetPtrSize,
 {
     /// Create a new `AliasRegions`.
-    pub fn new(offsets: Offsets) -> Self {
+    ///
+    /// When `collapse_wasm_memory_regions` is set, every access in the
+    /// Wasm-visible memory layer (vmctx, exec env, linear memories, tables,
+    /// globals) shares one alias region; see [`Self::region`].
+    pub fn new(offsets: Offsets, collapse_wasm_memory_regions: bool) -> Self {
         Self {
             pointer_type: ir::Type::int_with_byte_size(offsets.get_ptr_size().size().into())
                 .unwrap(),
             offsets,
+            collapse_wasm_memory_regions,
             cache: std::collections::HashMap::default(),
         }
     }

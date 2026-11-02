@@ -320,7 +320,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             #[cfg(feature = "profiler")]
             profile: None,
 
-            alias_regions: AliasRegions::new(offsets),
+            alias_regions: AliasRegions::new(offsets, !isa.flags().enable_alias_analysis()),
         }
     }
 
