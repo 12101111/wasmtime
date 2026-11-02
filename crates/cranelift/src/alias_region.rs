@@ -296,6 +296,22 @@ impl AliasRegionKey {
         // `xor`-fold the hash down to a single byte.
         hash.to_le_bytes().into_iter().fold(0, |a, b| a ^ b).into()
     }
+
+    /// Is this an access in the Wasm-visible memory layer, i.e. the vmctx, the
+    /// exec env, a linear memory, a table, or a global? Stack slots,
+    /// GC objects, unsafe intrinsics, and segments are not included.
+    fn is_wasm_memory_layer(self) -> bool {
+        matches!(
+            self,
+            Self::Vm { .. }
+                | Self::PublicMemory
+                | Self::DefinedMemory { .. }
+                | Self::PublicTable
+                | Self::DefinedTable { .. }
+                | Self::PublicGlobal
+                | Self::DefinedGlobal { .. }
+        )
+    }
 }
 
 /// Which logical part of a GC object an access targets.
@@ -350,6 +366,12 @@ pub struct AliasRegions<Offsets> {
     pointer_type: ir::Type,
     offsets: Offsets,
 
+    /// Whether all accesses in the Wasm-visible memory layer (the vmctx, the
+    /// exec env, linear memories, tables, and globals) should share a single
+    /// alias region.
+    /// This is enabled by disable enable_alias_analysis.
+    collapse_wasm_memory_regions: bool,
+
     /// Cache for `Self::gc_introducer`, keyed on the access site's type and the
     /// field index, if any.
     gc_introducer_cache: HashMap<(ModuleInternedTypeIndex, u32), ModuleInternedTypeIndex>,
@@ -362,13 +384,20 @@ impl<Offsets> AliasRegions<Offsets> {
     }
 
     /// Make the alias region for a stack map.
+    ///
+    /// Stack slots are not part of the Wasm-visible memory layer, so this is
+    /// unaffected by `collapse_wasm_memory_regions`.
     pub fn stack_map_region(
         regions: &mut ir::AliasRegionSet,
         _ty: ir::Type,
         slot: ir::StackSlot,
         _offset: u32,
     ) -> Option<ir::AliasRegion> {
-        Some(Self::insert_region(regions, AliasRegionKey::Stack { slot }))
+        Some(Self::insert_region(
+            regions,
+            false,
+            AliasRegionKey::Stack { slot },
+        ))
     }
 
     /// Get the alias region for a stack slot.
@@ -382,15 +411,38 @@ impl<Offsets> AliasRegions<Offsets> {
 
     /// Get the alias region for the given key.
     fn region(&mut self, func: &mut ir::Function, key: AliasRegionKey) -> ir::AliasRegion {
-        Self::insert_region(&mut func.dfg.alias_regions, key)
+        Self::insert_region(
+            &mut func.dfg.alias_regions,
+            self.collapse_wasm_memory_regions,
+            key,
+        )
     }
 
     /// Get or create the alias region for the given key.
-    fn insert_region(regions: &mut ir::AliasRegionSet, key: AliasRegionKey) -> ir::AliasRegion {
-        let user_id = key.into_raw();
+    fn insert_region(
+        regions: &mut ir::AliasRegionSet,
+        collapse_wasm_memory_regions: bool,
+        key: AliasRegionKey,
+    ) -> ir::AliasRegion {
+        // With `collapse_wasm_memory_regions`, every access in the Wasm-visible 
+        // memory layer shares one region, so accesses to the vmctx/exec env/tables/globals
+        // can no longer be proven disjoint from linear-memory accesses. Collapsing
+        // regions onto one `user_id` is always sound (it only loses
+        // optimization opportunities), and `AliasRegionSet::insert`
+        // deduplicates on `user_id`. Ordinary keys fold down into 0..=255, so
+        // `u32::MAX` cannot collide with one.
+        const COLLAPSED_WASM_MEMORY_USER_ID: u32 = u32::MAX;
+        let (user_id, description) = if collapse_wasm_memory_regions && key.is_wasm_memory_layer() {
+            (
+                COLLAPSED_WASM_MEMORY_USER_ID,
+                "wasm memory (alias analysis disabled)",
+            )
+        } else {
+            (key.into_raw(), "")
+        };
         let region = regions.insert(ir::AliasRegionData {
             user_id,
-            description: "".into(),
+            description: description.into(),
         });
         log::trace!("alias region: {key:?} => {region} (user_id = {user_id})");
         region
@@ -1182,11 +1234,16 @@ where
     Offsets: GetPtrSize,
 {
     /// Create a new `AliasRegions`.
-    pub fn new(offsets: Offsets) -> Self {
+    ///
+    /// When `collapse_wasm_memory_regions` is set, every access in the
+    /// Wasm-visible memory layer (vmctx, exec env, linear memories, tables,
+    /// globals) shares one alias region; see [`Self::insert_region`].
+    pub fn new(offsets: Offsets, collapse_wasm_memory_regions: bool) -> Self {
         Self {
             pointer_type: ir::Type::int_with_byte_size(offsets.get_ptr_size().size().into())
                 .unwrap(),
             offsets,
+            collapse_wasm_memory_regions,
             gc_introducer_cache: HashMap::new(),
         }
     }

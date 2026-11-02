@@ -805,9 +805,6 @@ pub struct AliasAnalysis<'a> {
 
     /// Counter for minting fresh extent tokens.
     next_extent: u32,
-
-    /// when set, this pass performs no optimizations at all
-    disabled: bool,
 }
 
 /// One block's scope on the dominator-tree path currently being walked.
@@ -845,7 +842,6 @@ impl<'a> AliasAnalysis<'a> {
             mem_values: FxHashMap::default(),
             scopes: SmallVec::new(),
             next_extent: 0,
-            disabled: false,
         };
 
         analysis.compute_block_input_states(func);
@@ -853,11 +849,6 @@ impl<'a> AliasAnalysis<'a> {
         analysis.compute_observed_stores(func);
 
         analysis
-    }
-
-    /// Disable all alias-analysis-based optimizations in this pass.
-    pub fn set_disabled(&mut self, disabled: bool) {
-        self.disabled = disabled;
     }
 
     /// Does `overwriter` post-dominate `maybe_dead`?
@@ -1181,10 +1172,6 @@ impl<'a> AliasAnalysis<'a> {
         state: &mut MemoryState,
         inst: Inst,
     ) -> OptResult {
-        if self.disabled {
-            return OptResult::None;
-        }
-
         trace!(
             "process_inst: {inst}: {}\n\twith last stores: {state:?}",
             func.dfg.display_inst(inst),

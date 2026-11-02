@@ -123,7 +123,7 @@ impl<'a> TrampolineCompiler<'a> {
             block0,
             signature,
             builtins: BuiltinFunctions::new(compiler),
-            alias_regions: AliasRegions::new(offsets),
+            alias_regions: AliasRegions::new(offsets, !isa.flags().enable_alias_analysis()),
         }
     }
 

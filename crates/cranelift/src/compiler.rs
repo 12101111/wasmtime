@@ -214,7 +214,8 @@ impl Compiler {
         let pointer_type = isa.pointer_type();
         let wasm_call_sig = wasm_call_signature(isa, wasm_func_ty, &self.tunables);
         let array_call_sig = array_call_signature(isa);
-        let mut alias_regions = AliasRegions::new(isa.pointer_bytes());
+        let mut alias_regions =
+            AliasRegions::new(isa.pointer_bytes(), !isa.flags().enable_alias_analysis());
 
         let mut compiler = self.function_compiler();
         let func = ir::Function::with_name_signature(key_to_name(key), wasm_call_sig);
@@ -352,7 +353,7 @@ impl Compiler {
         let isa = &*self.isa;
         let ptr_size = isa.pointer_bytes();
         let pointer_type = isa.pointer_type();
-        let mut alias_regions = AliasRegions::new(ptr_size);
+        let mut alias_regions = AliasRegions::new(ptr_size, !isa.flags().enable_alias_analysis());
         let sigs = BuiltinFunctionSignatures::new(self);
 
         let (builtin_func_index, wasm_sig) = match key {
@@ -1532,7 +1533,8 @@ impl Compiler {
 
         let isa = &*self.isa;
         let pointer_type = isa.pointer_type();
-        let mut alias_regions = AliasRegions::new(isa.pointer_bytes());
+        let mut alias_regions =
+            AliasRegions::new(isa.pointer_bytes(), !isa.flags().enable_alias_analysis());
         let wasm_call_sig = wasm_call_signature(isa, callee_sig, &self.tunables);
         let array_call_sig = array_call_signature(isa);
 
