@@ -748,7 +748,10 @@ pub(crate) fn emit(
                 // patching.
                 let off_into_table = word_off - jt_off;
                 sink.use_label_at_offset(word_off, target, LabelUse::PCRel32);
-                sink.put4(off_into_table);
+                // Jump table entries are data, not instructions. Emit them as
+                // inline data so `.wasmtime.datamap` records them and
+                // disassemblers skip the table instead of decoding it.
+                sink.put_inline_data(&off_into_table.to_le_bytes());
             }
         }
 
